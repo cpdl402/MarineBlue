@@ -1,0 +1,437 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MarineBlue ご注文</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Shippori+Mincho:wght@600;800&family=Zen+Kaku+Gothic+New:wght@400;500;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap">
+<script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
+<style>
+  :root{
+    --bg:#eef3f6;
+    --surface:#ffffff;
+    --surface-2:#f7fafb;
+    --ink:#152430;
+    --ink-muted:#51636e;
+    --ink-faint:#8399a4;
+    --line:#d7e1e6;
+    --line-strong:#c3d2d9;
+    --accent:#0d4a72;
+    --accent-deep:#083a5c;
+    --accent-soft:#e3edf3;
+    --good:#2f7d5c;
+    --good-soft:#e1f0e8;
+    --bad:#b3413a;
+    --bad-soft:#fbe7e4;
+  }
+  *{box-sizing:border-box;}
+  [hidden]{display:none!important;}
+  html,body{height:100%;}
+  body{margin:0;background:var(--surface);color:var(--ink);font-family:"Zen Kaku Gothic New","Hiragino Kaku Gothic ProN",sans-serif;}
+  button{font-family:inherit;}
+  .mono{font-family:"IBM Plex Mono",ui-monospace,monospace;}
+  .num{font-variant-numeric:tabular-nums;}
+  input,textarea{font-family:inherit;}
+
+  .navicon{width:34px;height:34px;border-radius:10px;display:flex;align-items:center;justify-content:center;cursor:pointer;border:none;background:none;padding:0;}
+  .btn-primary{background:var(--accent);color:#fff;border:none;border-radius:9px;font-weight:500;cursor:pointer;}
+  .btn-primary:hover{background:var(--accent-deep);}
+  .btn-primary:disabled{opacity:.5;cursor:default;}
+  .btn-ghost{background:var(--surface);color:var(--ink-muted);border:1px solid var(--line-strong);border-radius:9px;cursor:pointer;}
+
+  .fabric-card{border:1.5px solid var(--line);border-radius:14px;padding:13px 14px;display:flex;gap:12px;align-items:center;cursor:pointer;}
+  .fabric-card.selected{border-color:var(--accent);background:var(--accent-soft);}
+  .radio{width:22px;height:22px;border-radius:50%;border:1.5px solid var(--line-strong);flex:none;display:flex;align-items:center;justify-content:center;}
+  .fabric-card.selected .radio{background:var(--accent);border-color:var(--accent);}
+  .qty-btn{width:30px;height:30px;border-radius:8px;border:1px solid var(--line-strong);background:var(--surface);font-size:15px;color:var(--ink);cursor:pointer;line-height:1;}
+  .qty-btn:hover{background:var(--surface-2);}
+
+  .page{min-height:100vh;display:flex;flex-direction:column;}
+  .screen{display:flex;flex-direction:column;flex:1;min-height:0;}
+</style>
+</head>
+<body>
+
+<div class="page">
+
+  <div id="liff-loading" style="flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;">
+    <div style="width:34px;height:34px;border-radius:50%;border:3px solid var(--line);border-top-color:var(--accent);animation:spin 0.8s linear infinite;"></div>
+    <div id="liff-loading-text" style="font-size:12.5px;color:var(--ink-muted);">読み込み中…</div>
+    <div id="liff-debug" class="mono" style="font-size:10px;color:var(--ink-faint);max-width:88%;text-align:left;white-space:pre-wrap;line-height:1.6;"></div>
+  </div>
+  <style>@keyframes spin{to{transform:rotate(360deg);}}</style>
+
+  <div id="liff-error" hidden style="flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:32px;text-align:center;gap:10px;">
+    <div style="font-size:13.5px;color:var(--bad);">読み込みに失敗しました</div>
+    <div id="liff-error-detail" style="font-size:11.5px;color:var(--ink-faint);line-height:1.7;"></div>
+  </div>
+
+  <div id="order-step-1" class="screen" hidden>
+    <div style="padding:18px 18px 0;">
+      <div style="display:flex;align-items:center;justify-content:center;">
+        <div style="font-family:'Shippori Mincho',serif;font-weight:700;font-size:15px;">ご注文</div>
+      </div>
+      <div style="display:flex;gap:6px;margin-top:16px;">
+        <div style="flex:1;height:4px;border-radius:2px;background:var(--accent);"></div>
+        <div style="flex:1;height:4px;border-radius:2px;background:var(--line);"></div>
+        <div style="flex:1;height:4px;border-radius:2px;background:var(--line);"></div>
+      </div>
+    </div>
+
+    <div style="flex:1;overflow-y:auto;padding:20px 18px 16px;">
+      <div style="font-size:14.5px;font-weight:600;margin-bottom:3px;">生地・型番を選んでください</div>
+      <div style="font-size:12px;color:var(--ink-faint);margin-bottom:14px;">タップして選択できます</div>
+
+      <div style="display:flex;align-items:center;gap:9px;background:var(--surface-2);border:1px solid var(--line);border-radius:12px;padding:10px 13px;margin-bottom:16px;">
+        <svg width="16" height="16" viewBox="0 0 20 20" fill="none" stroke="#8399a4" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" style="flex:none;"><circle cx="8.7" cy="8.7" r="5.7"></circle><path d="m17 17-4.3-4.3"></path></svg>
+        <input id="fabric-search" type="text" placeholder="型番・生地名で検索（例：TS-450、裏起毛）" style="border:none;background:none;outline:none;font-size:12.5px;width:100%;color:var(--ink);" oninput="renderFabricList()">
+      </div>
+
+      <div id="fabric-label" style="display:flex;align-items:center;gap:6px;margin-bottom:10px;">
+        <svg width="13" height="13" viewBox="0 0 20 20" fill="none" stroke="#bd7f34" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 2.5 12.3 7.6 18 8.4l-4.1 3.9 1 5.6L10 15.1 5.1 17.9l1-5.6L2 8.4l5.7-.8Z"></path></svg>
+        <span style="font-size:12px;color:var(--ink-muted);font-weight:500;">よく注文される生地</span>
+      </div>
+
+      <div id="fabric-list" style="display:flex;flex-direction:column;gap:9px;"></div>
+      <div id="fabric-empty-note" style="font-size:11.5px;color:var(--ink-faint);margin-top:12px;text-align:center;">お探しの生地が見つからない場合は、上の検索欄で型番や生地名を入力してください</div>
+
+      <div style="height:1px;background:var(--line);margin:22px 0 16px;"></div>
+
+      <div style="font-size:14.5px;font-weight:600;margin-bottom:3px;">サイズ・数量</div>
+      <div id="fabric-selected-name" style="font-size:12px;color:var(--ink-faint);margin-bottom:12px;"></div>
+      <div id="size-rows" style="display:flex;flex-direction:column;gap:6px;"></div>
+    </div>
+
+    <div style="background:var(--surface);border-top:1px solid var(--line);padding:12px 18px 18px;display:flex;align-items:center;gap:14px;">
+      <div>
+        <div style="font-size:11px;color:var(--ink-faint);">合計</div>
+        <div class="mono num" id="qty-total" style="font-size:16px;font-weight:600;">–</div>
+      </div>
+      <button class="btn-primary" style="flex:1;height:46px;font-size:14px;" onclick="goToStep(2)">次へ：デザイン</button>
+    </div>
+  </div>
+
+  <div id="order-step-2" class="screen" hidden>
+    <div style="padding:18px 18px 0;">
+      <div style="display:flex;align-items:center;justify-content:space-between;">
+        <button class="navicon" style="background:var(--surface-2);" onclick="goToStep(1)">
+          <svg width="17" height="17" viewBox="0 0 20 20" fill="none" stroke="#152430" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12.5 4 6.5 10l6 6"></path></svg>
+        </button>
+        <div style="font-family:'Shippori Mincho',serif;font-weight:700;font-size:15px;">ご注文</div>
+        <div style="width:34px;"></div>
+      </div>
+      <div style="display:flex;gap:6px;margin-top:16px;">
+        <div style="flex:1;height:4px;border-radius:2px;background:var(--accent);"></div>
+        <div style="flex:1;height:4px;border-radius:2px;background:var(--accent);"></div>
+        <div style="flex:1;height:4px;border-radius:2px;background:var(--line);"></div>
+      </div>
+    </div>
+
+    <div style="flex:1;overflow-y:auto;padding:22px 18px 16px;">
+      <div style="font-size:14.5px;font-weight:600;margin-bottom:3px;">デザインについて教えてください</div>
+      <div style="font-size:12px;color:var(--ink-faint);margin-bottom:16px;">画像がなくてもご要望だけで結構です</div>
+
+      <div id="upload-box" onclick="toggleUpload()" style="border:1.5px dashed var(--line-strong);border-radius:14px;padding:22px;text-align:center;cursor:pointer;">
+        <div id="upload-icon" style="width:40px;height:40px;border-radius:10px;background:var(--accent-soft);margin:0 auto 10px;display:flex;align-items:center;justify-content:center;">
+          <svg width="19" height="19" viewBox="0 0 20 20" fill="none" stroke="#0d4a72" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13V4M6 8l4-4 4 4"></path><path d="M4 14v1.5A1.5 1.5 0 0 0 5.5 17h9a1.5 1.5 0 0 0 1.5-1.5V14"></path></svg>
+        </div>
+        <div id="upload-text" style="font-size:13px;color:var(--ink-muted);">タップして画像をアップロード</div>
+      </div>
+
+      <div style="font-size:13px;font-weight:600;margin:20px 0 8px;">ご要望・メモ</div>
+      <textarea id="design-text" rows="4" placeholder="例：胸に小さくロゴ、背中に大きくチーム名を入れたい" style="width:100%;border:1px solid var(--line);border-radius:10px;padding:11px 13px;font-size:13px;resize:none;outline:none;"></textarea>
+    </div>
+
+    <div style="background:var(--surface);border-top:1px solid var(--line);padding:12px 18px 18px;">
+      <button class="btn-primary" style="width:100%;height:46px;font-size:14px;" onclick="goToStep(3)">次へ：ご連絡先</button>
+    </div>
+  </div>
+
+  <div id="order-step-3" class="screen" hidden>
+    <div style="padding:18px 18px 0;">
+      <div style="display:flex;align-items:center;justify-content:space-between;">
+        <button class="navicon" style="background:var(--surface-2);" onclick="goToStep(2)">
+          <svg width="17" height="17" viewBox="0 0 20 20" fill="none" stroke="#152430" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12.5 4 6.5 10l6 6"></path></svg>
+        </button>
+        <div style="font-family:'Shippori Mincho',serif;font-weight:700;font-size:15px;">ご注文</div>
+        <div style="width:34px;"></div>
+      </div>
+      <div style="display:flex;gap:6px;margin-top:16px;">
+        <div style="flex:1;height:4px;border-radius:2px;background:var(--accent);"></div>
+        <div style="flex:1;height:4px;border-radius:2px;background:var(--accent);"></div>
+        <div style="flex:1;height:4px;border-radius:2px;background:var(--accent);"></div>
+      </div>
+    </div>
+
+    <div style="flex:1;overflow-y:auto;padding:22px 18px 16px;">
+      <div style="display:flex;align-items:center;gap:12px;background:var(--surface-2);border:1px solid var(--line);border-radius:12px;padding:12px 14px;margin-bottom:20px;">
+        <img id="liff-avatar" style="width:40px;height:40px;border-radius:50%;flex:none;background:var(--line);">
+        <div>
+          <div style="font-size:11px;color:var(--ink-faint);">LINEアカウント</div>
+          <div id="liff-name" style="font-size:13.5px;font-weight:600;"></div>
+        </div>
+      </div>
+
+      <div style="font-size:12.5px;color:var(--ink-muted);margin-bottom:6px;">電話番号（任意・お急ぎの確認用）</div>
+      <input id="cust-contact" type="tel" placeholder="例：090-1234-5678" style="width:100%;border:1px solid var(--line);border-radius:10px;padding:11px 13px;font-size:13.5px;outline:none;margin-bottom:16px;">
+
+      <div style="font-size:12.5px;color:var(--ink-muted);margin-bottom:6px;">納品希望日（任意）</div>
+      <input id="cust-date" type="date" style="width:100%;border:1px solid var(--line);border-radius:10px;padding:11px 13px;font-size:13.5px;outline:none;color:var(--ink);">
+
+      <div style="background:var(--surface-2);border:1px solid var(--line);border-radius:12px;padding:14px 15px;margin-top:22px;">
+        <div style="font-size:12.5px;font-weight:600;margin-bottom:8px;">ご注文内容</div>
+        <div id="order-summary" style="font-size:12.5px;color:var(--ink-muted);line-height:1.9;"></div>
+      </div>
+    </div>
+
+    <div style="background:var(--surface);border-top:1px solid var(--line);padding:12px 18px 18px;">
+      <button id="submit-btn" class="btn-primary" style="width:100%;height:46px;font-size:14px;" onclick="submitOrder()">この内容で注文する</button>
+    </div>
+  </div>
+
+  <div id="order-complete" class="screen" hidden style="align-items:center;justify-content:center;padding:32px;text-align:center;">
+    <div style="width:56px;height:56px;border-radius:50%;background:var(--good-soft);display:flex;align-items:center;justify-content:center;margin-bottom:18px;">
+      <svg width="26" height="26" viewBox="0 0 20 20" fill="none" stroke="#2f7d5c" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m4 10 4 4 8-9"></path></svg>
+    </div>
+    <div style="font-family:'Shippori Mincho',serif;font-weight:700;font-size:17px;margin-bottom:8px;">ご注文ありがとうございます</div>
+    <div style="font-size:12.5px;color:var(--ink-muted);line-height:1.8;">LINEに確認メッセージをお送りしました。見積り・デザインについては、このトークルームで担当者からご連絡します。</div>
+    <div class="mono" id="complete-order-id" style="margin-top:16px;font-size:12px;color:var(--ink-faint);"></div>
+    <div style="display:flex;flex-direction:column;gap:10px;width:100%;max-width:260px;margin-top:24px;">
+      <button class="btn-primary" style="width:100%;height:44px;font-size:13px;" onclick="closeLiff()">トークに戻る</button>
+    </div>
+  </div>
+
+</div>
+
+<script>
+/* このページはNetlifyで静的ホストし、データの保存・LINE通知はすべてGAS(customerプロジェクト)のdoPost APIを叩いて行う。
+   GAS単体でLIFF SDKをホストするとliff.init()が完了しない既知の相性問題があるため、フォームの表示だけここに切り出した。 */
+const CUSTOMER_API_URL = 'https://script.google.com/macros/s/AKfycbw7KCi8g5YQGN2hwauyF4b3j8FwtwtoEZ1dZb4p5ABHkmRNIU6YpkgZqoJ7mkuVrAi_cQ/exec';
+
+function esc(s){ const d=document.createElement('div'); d.textContent=s; return d.innerHTML; }
+function gsError(err){
+  console.error(err);
+  alert('サーバーとの通信でエラーが発生しました。時間をおいて再度お試しください。\n' + (err && err.message ? err.message : err));
+}
+function sizeLines(sizes, opts){
+  opts = opts || {};
+  const rows = ['S','M','L','XL'].filter(s=>sizes[s]>0).map(s=>
+    `<div style="display:flex;justify-content:space-between;align-items:center;padding:${opts.pad||'4px 0'};${opts.divider?'border-bottom:1px solid var(--line);':''}">
+      <span style="font-size:${opts.size||'13px'};">${s}</span>
+      <span class="mono" style="font-size:${opts.size||'13px'};color:${opts.muted?'var(--ink-muted)':'var(--ink)'};">${sizes[s]}枚</span>
+    </div>`
+  ).join('');
+  return rows || `<div style="font-size:${opts.size||'13px'};color:var(--ink-faint);">サイズ未選択</div>`;
+}
+
+const FABRICS = [
+  {id:'TS-100',name:'コットン天竺',desc:'定番の厚手コットン。刺繍・プリント両対応',price:1200,frequent:true,swatch:'linear-gradient(135deg,#c9d9e2,#9db6c4)'},
+  {id:'TS-220',name:'ポリコットン',desc:'軽量で速乾。イベント・チーム利用向け',price:1450,frequent:true,swatch:'linear-gradient(135deg,#dfe7ea,#b7c6cd)'},
+  {id:'TS-310',name:'ドライメッシュ',desc:'吸汗速乾。スポーツ・部活動向け',price:1800,frequent:true,swatch:'linear-gradient(135deg,#d3e3e6,#a7c3c8)'},
+  {id:'TS-450',name:'裏起毛スウェット',desc:'冬季向けの厚手裏起毛',price:2300,frequent:false,swatch:'linear-gradient(135deg,#e6dccd,#c3b393)'},
+  {id:'TS-510',name:'オーガニックコットン',desc:'環境配慮素材。肌当たりが柔らかい',price:1900,frequent:false,swatch:'linear-gradient(135deg,#dbe6d6,#adc2a4)'},
+  {id:'TS-600',name:'ヘビーウェイト',desc:'型崩れしにくい厚手生地',price:2100,frequent:false,swatch:'linear-gradient(135deg,#e2d7df,#b79fb0)'}
+];
+
+let orderForm = { fabricId:'TS-100', sizes:{S:1,M:2,L:1,XL:0}, uploaded:false, step:1 };
+let lineProfile = null;
+
+const ORDER_SCREEN_IDS = {step1:'order-step-1',step2:'order-step-2',step3:'order-step-3',complete:'order-complete'};
+function showOrderScreen(name){
+  Object.entries(ORDER_SCREEN_IDS).forEach(([k,id])=>{ document.getElementById(id).hidden = k!==name; });
+  window.scrollTo(0,0);
+}
+function goToStep(n){
+  orderForm.step = n;
+  showOrderScreen('step'+n);
+  if(n===3) renderSummary();
+}
+
+function renderFabricList(){
+  const q = document.getElementById('fabric-search').value.trim().toLowerCase();
+  const label = document.getElementById('fabric-label');
+  const note = document.getElementById('fabric-empty-note');
+  let list;
+  if(q){
+    list = FABRICS.filter(f => f.id.toLowerCase().includes(q) || f.name.toLowerCase().includes(q));
+    label.querySelector('span').textContent = '検索結果';
+    note.style.display = list.length ? 'none' : 'block';
+    if(!list.length) note.textContent = '一致する生地が見つかりませんでした';
+  } else {
+    list = FABRICS.filter(f=>f.frequent);
+    label.querySelector('span').textContent = 'よく注文される生地';
+    note.style.display = 'block';
+    note.textContent = 'お探しの生地が見つからない場合は、上の検索欄で型番や生地名を入力してください';
+  }
+  document.getElementById('fabric-list').innerHTML = list.map(f=>`
+    <div class="fabric-card ${f.id===orderForm.fabricId?'selected':''}" onclick="selectFabric('${f.id}')">
+      <div style="width:52px;height:52px;border-radius:10px;flex:none;background:${f.swatch};"></div>
+      <div style="flex:1;min-width:0;">
+        <div style="display:flex;align-items:center;gap:6px;"><span class="mono" style="font-size:11px;color:${f.id===orderForm.fabricId?'var(--accent)':'var(--ink-faint)'};">${f.id}</span><span style="font-size:13.5px;font-weight:600;">${esc(f.name)}</span></div>
+        <div style="font-size:11.5px;color:var(--ink-muted);margin-top:2px;">${esc(f.desc)}</div>
+        <div class="mono num" style="font-size:12.5px;margin-top:4px;">¥${f.price.toLocaleString()}<span style="font-size:10.5px;color:var(--ink-faint);font-family:'Zen Kaku Gothic New',sans-serif;">〜／枚</span></div>
+      </div>
+      <div class="radio">${f.id===orderForm.fabricId?'<svg width="12" height="12" viewBox="0 0 20 20" fill="none" stroke="#fff" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m4 10 4 4 8-9"></path></svg>':''}</div>
+    </div>`).join('');
+}
+function selectFabric(id){ orderForm.fabricId = id; renderFabricList(); renderSizeRows(); }
+
+function renderSizeRows(){
+  const f = FABRICS.find(x=>x.id===orderForm.fabricId);
+  document.getElementById('fabric-selected-name').textContent = f.id+' '+f.name;
+  document.getElementById('size-rows').innerHTML = ['S','M','L','XL'].map(sz=>`
+    <div style="display:flex;align-items:center;justify-content:space-between;padding:9px 4px;border-bottom:1px solid var(--line);">
+      <span style="font-size:13.5px;">${sz}</span>
+      <div style="display:flex;align-items:center;gap:14px;">
+        <button class="qty-btn" onclick="changeQty('${sz}',-1)">−</button>
+        <span class="mono num" style="font-size:14px;min-width:14px;text-align:center;">${orderForm.sizes[sz]}</span>
+        <button class="qty-btn" onclick="changeQty('${sz}',1)">＋</button>
+      </div>
+    </div>`).join('');
+  updateTotal();
+}
+function changeQty(sz, delta){
+  orderForm.sizes[sz] = Math.max(0, orderForm.sizes[sz]+delta);
+  renderSizeRows();
+}
+function updateTotal(){
+  const total = Object.values(orderForm.sizes).reduce((a,b)=>a+b,0);
+  document.getElementById('qty-total').innerHTML = total+`<span style="font-size:12px;color:var(--ink-faint);font-family:'Zen Kaku Gothic New',sans-serif;">枚</span>`;
+}
+
+function toggleUpload(){
+  orderForm.uploaded = !orderForm.uploaded;
+  const icon = document.getElementById('upload-icon');
+  const text = document.getElementById('upload-text');
+  if(orderForm.uploaded){
+    icon.style.background='var(--good-soft)';
+    icon.innerHTML='<svg width="19" height="19" viewBox="0 0 20 20" fill="none" stroke="#2f7d5c" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m4 10 4 4 8-9"></path></svg>';
+    text.textContent='design_ref.png をアップロードしました';
+  } else {
+    icon.style.background='var(--accent-soft)';
+    icon.innerHTML='<svg width="19" height="19" viewBox="0 0 20 20" fill="none" stroke="#0d4a72" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13V4M6 8l4-4 4 4"></path><path d="M4 14v1.5A1.5 1.5 0 0 0 5.5 17h9a1.5 1.5 0 0 0 1.5-1.5V14"></path></svg>';
+    text.textContent='タップして画像をアップロード';
+  }
+}
+
+function renderSummary(){
+  const f = FABRICS.find(x=>x.id===orderForm.fabricId);
+  const total = Object.values(orderForm.sizes).reduce((a,b)=>a+b,0);
+  const dateVal = document.getElementById('cust-date').value;
+  document.getElementById('order-summary').innerHTML = `
+    <div style="font-size:12.5px;color:var(--ink-muted);margin-bottom:4px;">${f.id} ${esc(f.name)}</div>
+    ${sizeLines(orderForm.sizes,{divider:true,size:'12.5px',muted:true})}
+    <div style="display:flex;justify-content:space-between;padding:7px 0 2px;">
+      <span style="font-size:12.5px;font-weight:600;">合計</span>
+      <span class="mono" style="font-size:12.5px;font-weight:600;">${total}枚</span>
+    </div>
+    <div style="height:1px;background:var(--line);margin:10px 0;"></div>
+    <div style="font-size:12.5px;color:var(--ink-muted);">デザイン：${orderForm.uploaded?'画像あり':'画像なし'}${document.getElementById('design-text').value.trim()?'・メモあり':''}</div>
+    <div style="font-size:12.5px;color:var(--ink-muted);margin-top:4px;">納品希望日：${dateVal || '未指定'}</div>`;
+}
+
+function submitOrder(){
+  if(!lineProfile){ alert('LINEのプロフィール取得に失敗しています。アプリを開き直してください。'); return; }
+  const f = FABRICS.find(x=>x.id===orderForm.fabricId);
+  const contact = document.getElementById('cust-contact').value.trim();
+  const desiredDate = document.getElementById('cust-date').value;
+  const designNote = document.getElementById('design-text').value.trim();
+  const payload = {
+    lineUserId: lineProfile.userId,
+    lineDisplayName: lineProfile.displayName,
+    contact: contact,
+    fabricId: f.id,
+    fabricName: f.name,
+    sizes: orderForm.sizes,
+    desiredDate: desiredDate,
+    designNote: designNote,
+    designUploaded: orderForm.uploaded
+  };
+
+  const btn = document.getElementById('submit-btn');
+  btn.disabled = true;
+  btn.textContent = '送信中…';
+
+  fetch(CUSTOMER_API_URL, {
+    method: 'POST',
+    headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+    body: JSON.stringify({ apiAction: 'createOrderFromLiff', payload: payload })
+  })
+    .then(function(res){ return res.json(); })
+    .then(function(result){
+      btn.disabled = false;
+      btn.textContent = 'この内容で注文する';
+      if(!result.ok){ gsError(result.error || '注文の登録に失敗しました'); return; }
+      showOrderScreen('complete');
+      document.getElementById('complete-order-id').textContent = '注文番号：#'+result.order.id;
+    })
+    .catch(function(err){
+      btn.disabled = false;
+      btn.textContent = 'この内容で注文する';
+      gsError(err);
+    });
+}
+
+function closeLiff(){
+  try{ if(liff.isInClient()) { liff.closeWindow(); return; } }catch(e){}
+  window.close();
+}
+
+/* ============ LIFF初期化 ============ */
+const liffSteps = [];
+function step(s){
+  liffSteps.push(s);
+  const dbg = document.getElementById('liff-debug');
+  if(dbg) dbg.textContent = liffSteps.join('\n');
+}
+function showLiffError(detail){
+  document.getElementById('liff-loading').hidden = true;
+  document.getElementById('liff-error').hidden = false;
+  document.getElementById('liff-error-detail').textContent = detail + '\n\n' + liffSteps.join('\n');
+}
+step('page loaded: ' + location.href);
+let liffWatchdog = setTimeout(function(){
+  showLiffError('初期化がタイムアウトしました（10秒）');
+}, 10000);
+function initLiff(){
+  try{
+    if(typeof liff === 'undefined'){
+      clearTimeout(liffWatchdog);
+      showLiffError('liff is undefined（SDK読み込み失敗）');
+      return;
+    }
+    step('liff SDK OK, isInClient=' + liff.isInClient());
+    liff.init({ liffId: '2011455921-pRkUNsnW' })
+      .then(function(){
+        step('init() resolved');
+        const loggedIn = liff.isLoggedIn();
+        step('isLoggedIn=' + loggedIn);
+        if(!loggedIn){ step('calling liff.login()'); liff.login(); return; }
+        step('calling getProfile()');
+        return liff.getProfile();
+      })
+      .then(function(profile){
+        if(!profile){ step('profile is empty(post-login redirect expected)'); return; }
+        step('getProfile OK: ' + profile.displayName);
+        clearTimeout(liffWatchdog);
+        lineProfile = profile;
+        document.getElementById('liff-name').textContent = profile.displayName;
+        document.getElementById('liff-avatar').src = profile.pictureUrl || '';
+        document.getElementById('liff-loading').hidden = true;
+        showOrderScreen('step1');
+        renderFabricList();
+        renderSizeRows();
+      })
+      .catch(function(err){
+        clearTimeout(liffWatchdog);
+        showLiffError('init/getProfileエラー: ' + ((err && err.message) ? err.message : String(err)) + (err && err.code ? (' / code: ' + err.code) : ''));
+      });
+  }catch(err){
+    clearTimeout(liffWatchdog);
+    showLiffError('同期エラー: ' + ((err && err.message) ? err.message : String(err)));
+  }
+}
+initLiff();
+</script>
+</body>
+</html>
