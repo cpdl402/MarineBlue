@@ -79,27 +79,29 @@
     </div>
 
     <div style="flex:1;overflow-y:auto;padding:20px 18px 16px;">
-      <div style="font-size:14.5px;font-weight:600;margin-bottom:3px;">生地・型番を選んでください</div>
-      <div style="font-size:12px;color:var(--ink-faint);margin-bottom:14px;">タップして選択できます</div>
+      <div style="font-size:14.5px;font-weight:600;margin-bottom:3px;">商品を検索してください</div>
+      <div style="font-size:12px;color:var(--ink-faint);margin-bottom:14px;">型番・商品名で検索できます</div>
 
       <div style="display:flex;align-items:center;gap:9px;background:var(--surface-2);border:1px solid var(--line);border-radius:12px;padding:10px 13px;margin-bottom:16px;">
         <svg width="16" height="16" viewBox="0 0 20 20" fill="none" stroke="#8399a4" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" style="flex:none;"><circle cx="8.7" cy="8.7" r="5.7"></circle><path d="m17 17-4.3-4.3"></path></svg>
-        <input id="fabric-search" type="text" placeholder="型番・生地名で検索（例：TS-450、裏起毛）" style="border:none;background:none;outline:none;font-size:12.5px;width:100%;color:var(--ink);" oninput="renderFabricList()">
+        <input id="item-search" type="text" placeholder="型番・商品名で検索（例：110001、Tシャツ）" style="border:none;background:none;outline:none;font-size:12.5px;width:100%;color:var(--ink);" oninput="searchItems()">
       </div>
 
-      <div id="fabric-label" style="display:flex;align-items:center;gap:6px;margin-bottom:10px;">
-        <svg width="13" height="13" viewBox="0 0 20 20" fill="none" stroke="#bd7f34" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 2.5 12.3 7.6 18 8.4l-4.1 3.9 1 5.6L10 15.1 5.1 17.9l1-5.6L2 8.4l5.7-.8Z"></path></svg>
-        <span style="font-size:12px;color:var(--ink-muted);font-weight:500;">よく注文される生地</span>
+      <div id="item-list" style="display:flex;flex-direction:column;gap:9px;"></div>
+      <div id="item-empty-note" style="font-size:11.5px;color:var(--ink-faint);margin-top:12px;text-align:center;">型番や商品名を入力して検索してください</div>
+
+      <div id="color-section" hidden>
+        <div style="height:1px;background:var(--line);margin:22px 0 16px;"></div>
+        <div style="font-size:14.5px;font-weight:600;margin-bottom:12px;">カラーを選んでください</div>
+        <div id="color-list" style="display:flex;flex-wrap:wrap;gap:8px;"></div>
       </div>
 
-      <div id="fabric-list" style="display:flex;flex-direction:column;gap:9px;"></div>
-      <div id="fabric-empty-note" style="font-size:11.5px;color:var(--ink-faint);margin-top:12px;text-align:center;">お探しの生地が見つからない場合は、上の検索欄で型番や生地名を入力してください</div>
-
-      <div style="height:1px;background:var(--line);margin:22px 0 16px;"></div>
-
-      <div style="font-size:14.5px;font-weight:600;margin-bottom:3px;">サイズ・数量</div>
-      <div id="fabric-selected-name" style="font-size:12px;color:var(--ink-faint);margin-bottom:12px;"></div>
-      <div id="size-rows" style="display:flex;flex-direction:column;gap:6px;"></div>
+      <div id="size-section" hidden>
+        <div style="height:1px;background:var(--line);margin:22px 0 16px;"></div>
+        <div style="font-size:14.5px;font-weight:600;margin-bottom:3px;">サイズ・数量</div>
+        <div id="fabric-selected-name" style="font-size:12px;color:var(--ink-faint);margin-bottom:12px;"></div>
+        <div id="size-rows" style="display:flex;flex-direction:column;gap:6px;"></div>
+      </div>
     </div>
 
     <div style="background:var(--surface);border-top:1px solid var(--line);padding:12px 18px 18px;display:flex;align-items:center;gap:14px;">
@@ -215,7 +217,7 @@ function gsError(err){
 }
 function sizeLines(sizes, opts){
   opts = opts || {};
-  const rows = ['S','M','L','XL'].filter(s=>sizes[s]>0).map(s=>
+  const rows = SIZE_ORDER.filter(s=>sizes[s]>0).map(s=>
     `<div style="display:flex;justify-content:space-between;align-items:center;padding:${opts.pad||'4px 0'};${opts.divider?'border-bottom:1px solid var(--line);':''}">
       <span style="font-size:${opts.size||'13px'};">${s}</span>
       <span class="mono" style="font-size:${opts.size||'13px'};color:${opts.muted?'var(--ink-muted)':'var(--ink)'};">${sizes[s]}枚</span>
@@ -224,17 +226,12 @@ function sizeLines(sizes, opts){
   return rows || `<div style="font-size:${opts.size||'13px'};color:var(--ink-faint);">サイズ未選択</div>`;
 }
 
-const FABRICS = [
-  {id:'TS-100',name:'コットン天竺',desc:'定番の厚手コットン。刺繍・プリント両対応',price:1200,frequent:true,swatch:'linear-gradient(135deg,#c9d9e2,#9db6c4)'},
-  {id:'TS-220',name:'ポリコットン',desc:'軽量で速乾。イベント・チーム利用向け',price:1450,frequent:true,swatch:'linear-gradient(135deg,#dfe7ea,#b7c6cd)'},
-  {id:'TS-310',name:'ドライメッシュ',desc:'吸汗速乾。スポーツ・部活動向け',price:1800,frequent:true,swatch:'linear-gradient(135deg,#d3e3e6,#a7c3c8)'},
-  {id:'TS-450',name:'裏起毛スウェット',desc:'冬季向けの厚手裏起毛',price:2300,frequent:false,swatch:'linear-gradient(135deg,#e6dccd,#c3b393)'},
-  {id:'TS-510',name:'オーガニックコットン',desc:'環境配慮素材。肌当たりが柔らかい',price:1900,frequent:false,swatch:'linear-gradient(135deg,#dbe6d6,#adc2a4)'},
-  {id:'TS-600',name:'ヘビーウェイト',desc:'型崩れしにくい厚手生地',price:2100,frequent:false,swatch:'linear-gradient(135deg,#e2d7df,#b79fb0)'}
-];
-
-let orderForm = { fabricId:'TS-100', sizes:{S:1,M:2,L:1,XL:0}, uploaded:false, step:1 };
+const SIZE_ORDER = ['XS','S','M','L','XL','XXL'];
+let orderForm = { itemCode:null, itemName:'', price:null, colorCode:null, colorName:'', sizes:{XS:0,S:0,M:0,L:0,XL:0,XXL:0}, uploaded:false, step:1 };
 let lineProfile = null;
+let itemSearchResults = [];
+let colorOptions = [];
+let productStock = [];
 
 const ORDER_SCREEN_IDS = {step1:'order-step-1',step2:'order-step-2',step3:'order-step-3',complete:'order-complete'};
 function showOrderScreen(name){
@@ -242,48 +239,92 @@ function showOrderScreen(name){
   window.scrollTo(0,0);
 }
 function goToStep(n){
+  if(n===2 && (!orderForm.itemCode || !orderForm.colorCode)){ alert('商品とカラーを選択してください。'); return; }
   orderForm.step = n;
   showOrderScreen('step'+n);
   if(n===3) renderSummary();
 }
 
-function renderFabricList(){
-  const q = document.getElementById('fabric-search').value.trim().toLowerCase();
-  const label = document.getElementById('fabric-label');
-  const note = document.getElementById('fabric-empty-note');
-  let list;
-  if(q){
-    list = FABRICS.filter(f => f.id.toLowerCase().includes(q) || f.name.toLowerCase().includes(q));
-    label.querySelector('span').textContent = '検索結果';
-    note.style.display = list.length ? 'none' : 'block';
-    if(!list.length) note.textContent = '一致する生地が見つかりませんでした';
-  } else {
-    list = FABRICS.filter(f=>f.frequent);
-    label.querySelector('span').textContent = 'よく注文される生地';
-    note.style.display = 'block';
-    note.textContent = 'お探しの生地が見つからない場合は、上の検索欄で型番や生地名を入力してください';
+let itemSearchTimer=null;
+function searchItems(){
+  clearTimeout(itemSearchTimer);
+  const q = document.getElementById('item-search').value.trim();
+  const note = document.getElementById('item-empty-note');
+  if(!q){
+    itemSearchResults=[];
+    document.getElementById('item-list').innerHTML='';
+    note.textContent='型番や商品名を入力して検索してください';
+    note.style.display='block';
+    return;
   }
-  document.getElementById('fabric-list').innerHTML = list.map(f=>`
-    <div class="fabric-card ${f.id===orderForm.fabricId?'selected':''}" onclick="selectFabric('${f.id}')">
-      <div style="width:52px;height:52px;border-radius:10px;flex:none;background:${f.swatch};"></div>
+  itemSearchTimer = setTimeout(function(){
+    fetch(CUSTOMER_API_URL + '?mode=productSearch&q=' + encodeURIComponent(q))
+      .then(function(res){ return res.json(); })
+      .then(function(data){
+        itemSearchResults = data || [];
+        renderItemList();
+        note.style.display = itemSearchResults.length ? 'none' : 'block';
+        note.textContent = '一致する商品が見つかりませんでした';
+      })
+      .catch(function(err){ console.error('商品検索に失敗: ', err); });
+  }, 300);
+}
+function renderItemList(){
+  document.getElementById('item-list').innerHTML = itemSearchResults.map(f=>`
+    <div class="fabric-card ${f.itemCode===orderForm.itemCode?'selected':''}" onclick="selectItem('${f.itemCode}')">
       <div style="flex:1;min-width:0;">
-        <div style="display:flex;align-items:center;gap:6px;"><span class="mono" style="font-size:11px;color:${f.id===orderForm.fabricId?'var(--accent)':'var(--ink-faint)'};">${f.id}</span><span style="font-size:13.5px;font-weight:600;">${esc(f.name)}</span></div>
-        <div style="font-size:11.5px;color:var(--ink-muted);margin-top:2px;">${esc(f.desc)}</div>
-        <div class="mono num" style="font-size:12.5px;margin-top:4px;">¥${f.price.toLocaleString()}<span style="font-size:10.5px;color:var(--ink-faint);font-family:'Zen Kaku Gothic New',sans-serif;">〜／枚</span></div>
+        <div style="display:flex;align-items:center;gap:6px;"><span class="mono" style="font-size:11px;color:${f.itemCode===orderForm.itemCode?'var(--accent)':'var(--ink-faint)'};">${esc(f.itemCode)}</span><span style="font-size:13.5px;font-weight:600;">${esc(f.itemName)}</span></div>
+        <div class="mono num" style="font-size:12.5px;margin-top:4px;">¥${esc(String(f.price))}<span style="font-size:10.5px;color:var(--ink-faint);font-family:'Zen Kaku Gothic New',sans-serif;">〜／枚</span></div>
       </div>
-      <div class="radio">${f.id===orderForm.fabricId?'<svg width="12" height="12" viewBox="0 0 20 20" fill="none" stroke="#fff" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m4 10 4 4 8-9"></path></svg>':''}</div>
+      <div class="radio">${f.itemCode===orderForm.itemCode?'<svg width="12" height="12" viewBox="0 0 20 20" fill="none" stroke="#fff" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m4 10 4 4 8-9"></path></svg>':''}</div>
     </div>`).join('');
 }
-function selectFabric(id){ orderForm.fabricId = id; renderFabricList(); renderSizeRows(); }
-
+function selectItem(code){
+  const item = itemSearchResults.find(x=>x.itemCode===code);
+  if(!item) return;
+  orderForm.itemCode = code;
+  orderForm.itemName = item.itemName;
+  orderForm.price = item.price;
+  orderForm.colorCode = null;
+  orderForm.colorName = '';
+  orderForm.sizes = {XS:0,S:0,M:0,L:0,XL:0,XXL:0};
+  renderItemList();
+  document.getElementById('size-section').hidden = true;
+  fetch(CUSTOMER_API_URL + '?mode=productColors&code=' + encodeURIComponent(code))
+    .then(function(res){ return res.json(); })
+    .then(function(colors){
+      colorOptions = colors || [];
+      renderColorList();
+      document.getElementById('color-section').hidden = false;
+    })
+    .catch(function(err){ console.error('カラー取得に失敗: ', err); });
+}
+function renderColorList(){
+  document.getElementById('color-list').innerHTML = colorOptions.map(c=>`
+    <button onclick="selectColor('${c.colorCode}')" style="padding:9px 14px;border-radius:999px;font-size:12.5px;cursor:pointer;border:1.5px solid ${c.colorCode===orderForm.colorCode?'var(--accent)':'var(--line-strong)'};background:${c.colorCode===orderForm.colorCode?'var(--accent-soft)':'var(--surface)'};color:${c.colorCode===orderForm.colorCode?'var(--accent)':'var(--ink)'};">${esc(c.colorName)}</button>`).join('');
+}
+function selectColor(colorCode){
+  const c = colorOptions.find(x=>x.colorCode===colorCode);
+  orderForm.colorCode = colorCode;
+  orderForm.colorName = c ? c.colorName : '';
+  orderForm.sizes = {XS:0,S:0,M:0,L:0,XL:0,XXL:0};
+  renderColorList();
+  fetch(CUSTOMER_API_URL + '?mode=productStock&code=' + encodeURIComponent(orderForm.itemCode) + '&color=' + encodeURIComponent(colorCode))
+    .then(function(res){ return res.json(); })
+    .then(function(stock){
+      productStock = stock || [];
+      document.getElementById('size-section').hidden = false;
+      renderSizeRows();
+    })
+    .catch(function(err){ console.error('在庫取得に失敗: ', err); });
+}
 function renderSizeRows(){
-  const f = FABRICS.find(x=>x.id===orderForm.fabricId);
-  document.getElementById('fabric-selected-name').textContent = f.id+' '+f.name;
-  document.getElementById('size-rows').innerHTML = ['S','M','L','XL'].map(sz=>`
+  document.getElementById('fabric-selected-name').textContent = orderForm.itemCode+' '+orderForm.itemName+' ／ '+orderForm.colorName;
+  document.getElementById('size-rows').innerHTML = SIZE_ORDER.map(sz=>`
     <div style="display:flex;align-items:center;justify-content:space-between;padding:9px 4px;border-bottom:1px solid var(--line);">
       <div>
         <span style="font-size:13.5px;">${sz}</span>
-        <div style="font-size:10.5px;margin-top:2px;">${stockLabel(f.id,sz)}</div>
+        <div style="font-size:10.5px;margin-top:2px;">${stockLabel(sz)}</div>
       </div>
       <div style="display:flex;align-items:center;gap:14px;">
         <button class="qty-btn" onclick="changeQty('${sz}',-1)">−</button>
@@ -293,16 +334,9 @@ function renderSizeRows(){
     </div>`).join('');
   updateTotal();
 }
-let inventoryData = [];
-function fetchInventory(){
-  fetch(CUSTOMER_API_URL + '?mode=inventory')
-    .then(function(res){ return res.json(); })
-    .then(function(data){ inventoryData = data || []; renderSizeRows(); })
-    .catch(function(err){ console.error('在庫情報の取得に失敗: ', err); });
-}
-function stockLabel(fabricId, size){
-  const row = inventoryData.find(r=>r.fabricId===fabricId && r.size===size);
-  if(!row) return '<span style="color:var(--ink-faint);">在庫情報なし</span>';
+function stockLabel(size){
+  const row = productStock.find(r=>r.size===size);
+  if(!row) return '<span style="color:var(--ink-faint);">取り扱いなし</span>';
   if(row.qty<=0) return '<span style="color:var(--bad);">在庫切れ・お取り寄せ</span>';
   if(row.qty<5) return `<span style="color:var(--thread);">在庫少なめ（残り${row.qty}枚）</span>`;
   return `<span style="color:var(--ink-faint);">在庫あり（${row.qty}枚）</span>`;
@@ -332,11 +366,10 @@ function toggleUpload(){
 }
 
 function renderSummary(){
-  const f = FABRICS.find(x=>x.id===orderForm.fabricId);
   const total = Object.values(orderForm.sizes).reduce((a,b)=>a+b,0);
   const dateVal = document.getElementById('cust-date').value;
   document.getElementById('order-summary').innerHTML = `
-    <div style="font-size:12.5px;color:var(--ink-muted);margin-bottom:4px;">${f.id} ${esc(f.name)}</div>
+    <div style="font-size:12.5px;color:var(--ink-muted);margin-bottom:4px;">${esc(orderForm.itemCode)} ${esc(orderForm.itemName)} ／ ${esc(orderForm.colorName)}</div>
     ${sizeLines(orderForm.sizes,{divider:true,size:'12.5px',muted:true})}
     <div style="display:flex;justify-content:space-between;padding:7px 0 2px;">
       <span style="font-size:12.5px;font-weight:600;">合計</span>
@@ -349,7 +382,6 @@ function renderSummary(){
 
 function submitOrder(){
   if(!lineProfile){ alert('LINEのプロフィール取得に失敗しています。アプリを開き直してください。'); return; }
-  const f = FABRICS.find(x=>x.id===orderForm.fabricId);
   const contact = document.getElementById('cust-contact').value.trim();
   if(!contact){ alert('電話番号を入力してください。'); document.getElementById('cust-contact').focus(); return; }
   const desiredDate = document.getElementById('cust-date').value;
@@ -358,8 +390,10 @@ function submitOrder(){
     lineUserId: lineProfile.userId,
     lineDisplayName: lineProfile.displayName,
     contact: contact,
-    fabricId: f.id,
-    fabricName: f.name,
+    fabricId: orderForm.itemCode,
+    fabricName: orderForm.itemName,
+    colorCode: orderForm.colorCode,
+    colorName: orderForm.colorName,
     sizes: orderForm.sizes,
     desiredDate: desiredDate,
     designNote: designNote,
@@ -437,9 +471,6 @@ function initLiff(){
         document.getElementById('liff-avatar').src = profile.pictureUrl || '';
         document.getElementById('liff-loading').hidden = true;
         showOrderScreen('step1');
-        renderFabricList();
-        renderSizeRows();
-        fetchInventory();
       })
       .catch(function(err){
         clearTimeout(liffWatchdog);
