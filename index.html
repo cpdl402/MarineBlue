@@ -217,17 +217,16 @@ function gsError(err){
 }
 function sizeLines(sizes, opts){
   opts = opts || {};
-  const rows = SIZE_ORDER.filter(s=>sizes[s]>0).map(s=>
+  const rows = Object.keys(sizes).filter(s=>sizes[s]>0).map(s=>
     `<div style="display:flex;justify-content:space-between;align-items:center;padding:${opts.pad||'4px 0'};${opts.divider?'border-bottom:1px solid var(--line);':''}">
-      <span style="font-size:${opts.size||'13px'};">${s}</span>
+      <span style="font-size:${opts.size||'13px'};">${esc(s)}</span>
       <span class="mono" style="font-size:${opts.size||'13px'};color:${opts.muted?'var(--ink-muted)':'var(--ink)'};">${sizes[s]}枚</span>
     </div>`
   ).join('');
   return rows || `<div style="font-size:${opts.size||'13px'};color:var(--ink-faint);">サイズ未選択</div>`;
 }
 
-const SIZE_ORDER = ['XS','S','M','L','XL','XXL'];
-let orderForm = { itemCode:null, itemName:'', price:null, colorCode:null, colorName:'', sizes:{XS:0,S:0,M:0,L:0,XL:0,XXL:0}, uploaded:false, step:1 };
+let orderForm = { itemCode:null, itemName:'', price:null, colorCode:null, colorName:'', sizes:{}, uploaded:false, step:1 };
 let lineProfile = null;
 let itemSearchResults = [];
 let colorOptions = [];
@@ -287,7 +286,7 @@ function selectItem(code){
   orderForm.price = item.price;
   orderForm.colorCode = null;
   orderForm.colorName = '';
-  orderForm.sizes = {XS:0,S:0,M:0,L:0,XL:0,XXL:0};
+  orderForm.sizes = {};
   renderItemList();
   document.getElementById('size-section').hidden = true;
   fetch(CUSTOMER_API_URL + '?mode=productColors&code=' + encodeURIComponent(code))
@@ -307,12 +306,14 @@ function selectColor(colorCode){
   const c = colorOptions.find(x=>x.colorCode===colorCode);
   orderForm.colorCode = colorCode;
   orderForm.colorName = c ? c.colorName : '';
-  orderForm.sizes = {XS:0,S:0,M:0,L:0,XL:0,XXL:0};
+  orderForm.sizes = {};
   renderColorList();
   fetch(CUSTOMER_API_URL + '?mode=productStock&code=' + encodeURIComponent(orderForm.itemCode) + '&color=' + encodeURIComponent(colorCode))
     .then(function(res){ return res.json(); })
     .then(function(stock){
       productStock = stock || [];
+      orderForm.sizes = {};
+      productStock.forEach(function(row){ orderForm.sizes[row.size] = 0; });
       document.getElementById('size-section').hidden = false;
       renderSizeRows();
     })
@@ -320,23 +321,23 @@ function selectColor(colorCode){
 }
 function renderSizeRows(){
   document.getElementById('fabric-selected-name').textContent = orderForm.itemCode+' '+orderForm.itemName+' ／ '+orderForm.colorName;
-  document.getElementById('size-rows').innerHTML = SIZE_ORDER.map(sz=>`
-    <div style="display:flex;align-items:center;justify-content:space-between;padding:9px 4px;border-bottom:1px solid var(--line);">
+  document.getElementById('size-rows').innerHTML = productStock.map(row=>{
+    const sz = row.size;
+    return `<div style="display:flex;align-items:center;justify-content:space-between;padding:9px 4px;border-bottom:1px solid var(--line);">
       <div>
-        <span style="font-size:13.5px;">${sz}</span>
-        <div style="font-size:10.5px;margin-top:2px;">${stockLabel(sz)}</div>
+        <span style="font-size:13.5px;">${esc(sz)}</span>
+        <div style="font-size:10.5px;margin-top:2px;">${stockLabel(row)}</div>
       </div>
       <div style="display:flex;align-items:center;gap:14px;">
         <button class="qty-btn" onclick="changeQty('${sz}',-1)">−</button>
-        <span class="mono num" style="font-size:14px;min-width:14px;text-align:center;">${orderForm.sizes[sz]}</span>
+        <span class="mono num" style="font-size:14px;min-width:14px;text-align:center;">${orderForm.sizes[sz]||0}</span>
         <button class="qty-btn" onclick="changeQty('${sz}',1)">＋</button>
       </div>
-    </div>`).join('');
+    </div>`;
+  }).join('') || '<div style="font-size:12px;color:var(--ink-faint);">この商品のサイズ情報が見つかりませんでした</div>';
   updateTotal();
 }
-function stockLabel(size){
-  const row = productStock.find(r=>r.size===size);
-  if(!row) return '<span style="color:var(--ink-faint);">取り扱いなし</span>';
+function stockLabel(row){
   if(row.qty<=0) return '<span style="color:var(--bad);">在庫切れ・お取り寄せ</span>';
   if(row.qty<5) return `<span style="color:var(--thread);">在庫少なめ（残り${row.qty}枚）</span>`;
   return `<span style="color:var(--ink-faint);">在庫あり（${row.qty}枚）</span>`;
