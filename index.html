@@ -254,7 +254,11 @@ function showOrderScreen(name){
   window.scrollTo(0,0);
 }
 function goToStep(n){
-  if(n===2 && (!orderForm.itemCode || !orderForm.colorCode)){ alert('商品とカラーを選択してください。'); return; }
+  if(n===2){
+    if(!orderForm.itemCode || !orderForm.colorCode){ alert('商品とカラーを選択してください。'); return; }
+    const total = Object.values(orderForm.sizes).reduce((a,b)=>a+b,0);
+    if(total<=0){ alert('サイズを選択し、数量を1枚以上入力してください。'); return; }
+  }
   orderForm.step = n;
   showOrderScreen('step'+n);
   if(n===3) renderSummary();
@@ -299,7 +303,6 @@ function renderItemList(){
     <div class="fabric-card ${f.itemCode===orderForm.itemCode?'selected':''}" onclick="selectItem('${f.itemCode}')">
       <div style="flex:1;min-width:0;">
         <div style="display:flex;align-items:center;gap:6px;"><span class="mono" style="font-size:11px;color:${f.itemCode===orderForm.itemCode?'var(--accent)':'var(--ink-faint)'};">${esc(f.itemCode)}</span><span style="font-size:13.5px;font-weight:600;">${esc(f.itemName)}</span></div>
-        <div class="mono num" style="font-size:12.5px;margin-top:4px;">¥${esc(String(f.price))}<span style="font-size:10.5px;color:var(--ink-faint);font-family:'Zen Kaku Gothic New',sans-serif;">〜／枚</span></div>
       </div>
       <div class="radio">${f.itemCode===orderForm.itemCode?'<svg width="12" height="12" viewBox="0 0 20 20" fill="none" stroke="#fff" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m4 10 4 4 8-9"></path></svg>':''}</div>
     </div>`).join('');
