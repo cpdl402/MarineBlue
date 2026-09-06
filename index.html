@@ -254,6 +254,16 @@ function searchItems(){
     document.getElementById('item-list').innerHTML='';
     note.textContent='型番や商品名を入力して検索してください';
     note.style.display='block';
+    orderForm.itemCode=null;
+    orderForm.itemName='';
+    orderForm.colorCode=null;
+    orderForm.colorName='';
+    orderForm.sizes={};
+    colorOptions=[];
+    productStock=[];
+    document.getElementById('color-section').hidden=true;
+    document.getElementById('size-section').hidden=true;
+    updateTotal();
     return;
   }
   itemSearchTimer = setTimeout(function(){
