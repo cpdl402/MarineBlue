@@ -1,0 +1,189 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MarineBlue 注文状況</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Shippori+Mincho:wght@600;800&family=Zen+Kaku+Gothic+New:wght@400;500;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap">
+<script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
+<style>
+  :root{
+    --bg:#eef3f6;
+    --surface:#ffffff;
+    --surface-2:#f7fafb;
+    --ink:#152430;
+    --ink-muted:#51636e;
+    --ink-faint:#8399a4;
+    --line:#d7e1e6;
+    --line-strong:#c3d2d9;
+    --accent:#0d4a72;
+    --accent-deep:#083a5c;
+    --accent-soft:#e3edf3;
+    --good:#2f7d5c;
+    --good-soft:#e1f0e8;
+    --bad:#b3413a;
+    --bad-soft:#fbe7e4;
+  }
+  *{box-sizing:border-box;}
+  [hidden]{display:none!important;}
+  html,body{height:100%;}
+  body{margin:0;background:var(--surface);color:var(--ink);font-family:"Zen Kaku Gothic New","Hiragino Kaku Gothic ProN",sans-serif;}
+  button{font-family:inherit;}
+  .mono{font-family:"IBM Plex Mono",ui-monospace,monospace;}
+  .num{font-variant-numeric:tabular-nums;}
+  .btn-primary{background:var(--accent);color:#fff;border:none;border-radius:9px;font-weight:500;cursor:pointer;}
+  .btn-primary:hover{background:var(--accent-deep);}
+  .page{min-height:100vh;display:flex;flex-direction:column;}
+  .badge{display:inline-flex;align-items:center;gap:5px;padding:5px 11px;border-radius:999px;font-size:11.5px;font-weight:600;}
+  .badge-good{background:var(--good-soft);color:var(--good);}
+  .badge-pending{background:var(--surface-2);color:var(--ink-faint);border:1px solid var(--line-strong);}
+</style>
+</head>
+<body>
+
+<div class="page">
+  <div id="loading" style="flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;">
+    <div style="width:34px;height:34px;border-radius:50%;border:3px solid var(--line);border-top-color:var(--accent);animation:spin 0.8s linear infinite;"></div>
+    <div style="font-size:12.5px;color:var(--ink-muted);">読み込み中…</div>
+  </div>
+  <style>@keyframes spin{to{transform:rotate(360deg);}}</style>
+
+  <div id="error-screen" hidden style="flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:32px;text-align:center;gap:10px;">
+    <div style="font-size:13.5px;color:var(--bad);" id="error-text">読み込みに失敗しました</div>
+  </div>
+
+  <div id="empty-screen" hidden style="flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:32px;text-align:center;gap:10px;">
+    <div style="font-size:13.5px;font-weight:600;">現在ご注文の記録がありません</div>
+    <div style="font-size:12px;color:var(--ink-faint);">ご注文がお済みの場合は、担当者にお問い合わせください。</div>
+  </div>
+
+  <div id="status-screen" hidden class="screen" style="flex:1;display:flex;flex-direction:column;">
+    <div style="padding:18px 18px 0;text-align:center;">
+      <div style="font-family:'Shippori Mincho',serif;font-weight:700;font-size:15px;">ご注文状況</div>
+    </div>
+
+    <div style="flex:1;overflow-y:auto;padding:20px 18px 24px;">
+      <div class="mono" id="order-id" style="font-size:11.5px;color:var(--ink-faint);text-align:center;margin-bottom:18px;"></div>
+
+      <div id="stepper" style="display:flex;flex-direction:column;gap:0;margin-bottom:24px;"></div>
+
+      <div style="background:var(--surface-2);border:1px solid var(--line);border-radius:12px;padding:14px 15px;margin-bottom:14px;">
+        <div style="font-size:12.5px;font-weight:600;margin-bottom:8px;">ご注文内容</div>
+        <div id="order-product" style="font-size:12.5px;color:var(--ink-muted);margin-bottom:6px;"></div>
+        <div id="order-sizes" style="font-size:12.5px;color:var(--ink-muted);line-height:1.9;"></div>
+        <div style="height:1px;background:var(--line);margin:10px 0;"></div>
+        <div id="order-date" style="font-size:12.5px;color:var(--ink-muted);"></div>
+      </div>
+
+      <div style="background:var(--surface-2);border:1px solid var(--line);border-radius:12px;padding:14px 15px;">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
+          <div style="font-size:12.5px;font-weight:600;">お見積り</div>
+          <span id="estimate-badge"></span>
+        </div>
+        <div id="estimate-amount" class="mono num" style="font-size:20px;font-weight:600;"></div>
+        <div style="height:1px;background:var(--line);margin:12px 0;"></div>
+        <div style="display:flex;align-items:center;justify-content:space-between;">
+          <div style="font-size:12.5px;font-weight:600;">デザイン確認</div>
+          <span id="design-badge"></span>
+        </div>
+      </div>
+
+      <div style="font-size:11.5px;color:var(--ink-faint);margin-top:16px;line-height:1.7;">見積り・デザインの詳細については、このトークルームで担当者にご確認ください。</div>
+    </div>
+  </div>
+</div>
+
+<script>
+const CUSTOMER_API_URL = 'https://script.google.com/macros/s/AKfycbw7KCi8g5YQGN2hwauyF4b3j8FwtwtoEZ1dZb4p5ABHkmRNIU6YpkgZqoJ7mkuVrAi_cQ/exec';
+const STATUS_STEPS = ['受注受付','見積り中','デザイン確認中','製作中','納品済み'];
+
+function esc(s){ const d=document.createElement('div'); d.textContent=s; return d.innerHTML; }
+function showScreen(id){
+  ['loading','error-screen','empty-screen','status-screen'].forEach(function(s){
+    document.getElementById(s).hidden = (s!==id);
+  });
+}
+function showError(msg){
+  document.getElementById('error-text').textContent = msg;
+  showScreen('error-screen');
+}
+
+function renderStepper(status){
+  const idx = STATUS_STEPS.indexOf(status);
+  document.getElementById('stepper').innerHTML = STATUS_STEPS.map(function(s,i){
+    const done = i <= idx;
+    const isLast = i === STATUS_STEPS.length-1;
+    return `<div style="display:flex;gap:12px;">
+      <div style="display:flex;flex-direction:column;align-items:center;">
+        <div style="width:22px;height:22px;border-radius:50%;flex:none;display:flex;align-items:center;justify-content:center;background:${done?'var(--accent)':'var(--surface-2)'};border:1.5px solid ${done?'var(--accent)':'var(--line-strong)'};">
+          ${done?'<svg width="11" height="11" viewBox="0 0 20 20" fill="none" stroke="#fff" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="m4 10 4 4 8-9"></path></svg>':''}
+        </div>
+        ${!isLast?`<div style="width:2px;flex:1;min-height:22px;background:${i<idx?'var(--accent)':'var(--line)'};"></div>`:''}
+      </div>
+      <div style="padding-bottom:22px;">
+        <div style="font-size:13px;font-weight:${i===idx?'700':'500'};color:${done?'var(--ink)':'var(--ink-faint)'};">${esc(s)}</div>
+        ${i===idx?'<div style="font-size:11px;color:var(--accent);margin-top:2px;">現在の状況</div>':''}
+      </div>
+    </div>`;
+  }).join('');
+}
+
+function renderOrder(order){
+  document.getElementById('order-id').textContent = '注文番号：#'+order.id;
+  renderStepper(order.status);
+  document.getElementById('order-product').textContent = order.fabricId+' '+order.fabricName+(order.colorName?' ／ '+order.colorName:'');
+  const sizeEntries = Object.keys(order.sizes||{}).filter(function(s){return order.sizes[s]>0;});
+  document.getElementById('order-sizes').innerHTML = sizeEntries.length
+    ? sizeEntries.map(function(s){return `<div style="display:flex;justify-content:space-between;padding:2px 0;"><span>${esc(s)}</span><span class="mono">${order.sizes[s]}枚</span></div>`;}).join('')
+    : '<div style="color:var(--ink-faint);">サイズ未選択</div>';
+  document.getElementById('order-date').textContent = '納品希望日：'+(order.desiredDate || '未指定');
+
+  const estBadge = document.getElementById('estimate-badge');
+  const estAmount = document.getElementById('estimate-amount');
+  if(order.estimate===null || order.estimate===undefined){
+    estBadge.innerHTML = '<span class="badge badge-pending">未確定</span>';
+    estAmount.textContent = '見積り作成中です';
+    estAmount.style.color = 'var(--ink-faint)';
+    estAmount.style.fontSize = '13px';
+  } else {
+    estBadge.innerHTML = order.estimateConfirmed ? '<span class="badge badge-good">確定済み</span>' : '<span class="badge badge-pending">確認待ち</span>';
+    estAmount.textContent = '¥'+Number(order.estimate).toLocaleString();
+    estAmount.style.color = 'var(--ink)';
+    estAmount.style.fontSize = '20px';
+  }
+  document.getElementById('design-badge').innerHTML = order.designConfirmed ? '<span class="badge badge-good">確定済み</span>' : '<span class="badge badge-pending">確認中</span>';
+
+  showScreen('status-screen');
+}
+
+function loadStatus(userId){
+  fetch(CUSTOMER_API_URL + '?mode=orderStatus&lineUserId=' + encodeURIComponent(userId))
+    .then(function(res){ return res.json(); })
+    .then(function(order){
+      if(!order){ showScreen('empty-screen'); return; }
+      renderOrder(order);
+    })
+    .catch(function(err){ console.error(err); showError('サーバーとの通信でエラーが発生しました。'); });
+}
+
+function initLiff(){
+  try{
+    if(typeof liff === 'undefined'){ showError('LIFFの読み込みに失敗しました'); return; }
+    liff.init({ liffId: '2011455921-pRkUNsnW' })
+      .then(function(){
+        if(!liff.isLoggedIn()){ liff.login(); return; }
+        return liff.getProfile();
+      })
+      .then(function(profile){
+        if(!profile) return;
+        loadStatus(profile.userId);
+      })
+      .catch(function(err){ showError('初期化エラー: ' + ((err&&err.message)?err.message:String(err))); });
+  }catch(err){
+    showError('同期エラー: ' + ((err&&err.message)?err.message:String(err)));
+  }
+}
+initLiff();
+</script>
+</body>
+</html>
