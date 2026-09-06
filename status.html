@@ -62,7 +62,17 @@
       <div style="font-family:'Shippori Mincho',serif;font-weight:700;font-size:15px;">ご注文状況</div>
     </div>
 
-    <div id="orders-container" style="flex:1;overflow-y:auto;padding:20px 18px 24px;display:flex;flex-direction:column;gap:16px;"></div>
+    <div id="orders-container" style="flex:1;overflow-y:auto;padding:20px 18px 24px;display:flex;flex-direction:column;gap:12px;"></div>
+  </div>
+
+  <div id="detail-screen" hidden class="screen" style="flex:1;display:flex;flex-direction:column;">
+    <div style="padding:18px 18px 0;display:flex;align-items:center;">
+      <button onclick="backToList()" style="width:34px;height:34px;border-radius:10px;display:flex;align-items:center;justify-content:center;background:var(--surface-2);border:none;cursor:pointer;">
+        <svg width="17" height="17" viewBox="0 0 20 20" fill="none" stroke="#152430" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12.5 4 6.5 10l6 6"></path></svg>
+      </button>
+      <div style="flex:1;text-align:center;font-family:'Shippori Mincho',serif;font-weight:700;font-size:15px;margin-right:34px;">ご注文詳細</div>
+    </div>
+    <div id="order-detail-container" style="flex:1;overflow-y:auto;padding:20px 18px 24px;"></div>
   </div>
 </div>
 
@@ -72,10 +82,35 @@ const STATUS_STEPS = ['受注受付','見積り中','デザイン確認中','製
 
 function esc(s){ const d=document.createElement('div'); d.textContent=s; return d.innerHTML; }
 function showScreen(id){
-  ['loading','error-screen','empty-screen','status-screen'].forEach(function(s){
+  ['loading','error-screen','empty-screen','status-screen','detail-screen'].forEach(function(s){
     document.getElementById(s).hidden = (s!==id);
   });
 }
+let ordersData = [];
+function statusBadgeHtml(status){
+  if(status==='納品済み') return `<span class="badge badge-good">${esc(status||'')}</span>`;
+  if(status==='受注受付') return `<span class="badge badge-pending">${esc(status||'')}</span>`;
+  return `<span class="badge" style="background:var(--accent-soft);color:var(--accent);">${esc(status||'')}</span>`;
+}
+function orderRowHtml(order){
+  const productLabel = (order.fabricId||'') + (order.fabricName?(' '+order.fabricName):'') + (order.colorName?(' ／ '+order.colorName):'');
+  return `<div onclick="showOrderDetail('${esc(order.id||'')}')" style="display:flex;align-items:center;gap:12px;border:1px solid var(--line);border-radius:14px;padding:14px 16px;cursor:pointer;">
+    <div style="flex:1;min-width:0;">
+      <div class="mono" style="font-size:11px;color:var(--ink-faint);margin-bottom:4px;">#${esc(order.id||'')}</div>
+      <div style="font-size:13.5px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${esc(productLabel)}</div>
+      <div style="margin-top:7px;">${statusBadgeHtml(order.status)}</div>
+    </div>
+    <svg width="16" height="16" viewBox="0 0 20 20" fill="none" stroke="#8399a4" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" style="flex:none;"><path d="m7.5 4 6 6-6 6"></path></svg>
+  </div>`;
+}
+function showOrderDetail(id){
+  const order = ordersData.find(function(o){ return String(o.id)===String(id); });
+  if(!order) return;
+  document.getElementById('order-detail-container').innerHTML = orderCardHtml(order)
+    + '<div style="font-size:11.5px;color:var(--ink-faint);line-height:1.7;text-align:center;margin-top:16px;">見積り・デザインの詳細については、このトークルームで担当者にご確認ください。</div>';
+  showScreen('detail-screen');
+}
+function backToList(){ showScreen('status-screen'); }
 function showError(msg){
   document.getElementById('error-text').textContent = msg;
   showScreen('error-screen');
@@ -120,12 +155,12 @@ function orderCardHtml(order){
   const designBadge = order.designConfirmed ? '<span class="badge badge-good">確定済み</span>' : '<span class="badge badge-pending">確認中</span>';
 
   return `<div style="border:1px solid var(--line);border-radius:14px;padding:16px 16px 18px;">
-    <div class="mono" style="font-size:11.5px;color:var(--ink-faint);text-align:center;margin-bottom:16px;">注文番号：#${esc(order.id)}</div>
+    <div class="mono" style="font-size:11.5px;color:var(--ink-faint);text-align:center;margin-bottom:16px;">注文番号：#${esc(order.id||'')}</div>
     <div style="display:flex;flex-direction:column;margin-bottom:20px;">${stepperHtml(order.status)}</div>
 
     <div style="background:var(--surface-2);border:1px solid var(--line);border-radius:12px;padding:14px 15px;margin-bottom:14px;">
       <div style="font-size:12.5px;font-weight:600;margin-bottom:8px;">ご注文内容</div>
-      <div style="font-size:12.5px;color:var(--ink-muted);margin-bottom:6px;">${esc(order.fabricId)} ${esc(order.fabricName||'')}${order.colorName?' ／ '+esc(order.colorName):''}</div>
+      <div style="font-size:12.5px;color:var(--ink-muted);margin-bottom:6px;">${esc(order.fabricId||'')} ${esc(order.fabricName||'')}${order.colorName?' ／ '+esc(order.colorName):''}</div>
       <div style="font-size:12.5px;color:var(--ink-muted);line-height:1.9;">${sizesHtml}</div>
       <div style="height:1px;background:var(--line);margin:10px 0;"></div>
       <div style="font-size:12.5px;color:var(--ink-muted);">納品希望日：${esc(order.desiredDate || '未指定')}</div>
@@ -150,10 +185,9 @@ function loadStatus(userId){
   fetch(CUSTOMER_API_URL + '?mode=orderStatus&lineUserId=' + encodeURIComponent(userId))
     .then(function(res){ return res.json(); })
     .then(function(orderList){
-      const orders = orderList || [];
-      if(!orders.length){ showScreen('empty-screen'); return; }
-      document.getElementById('orders-container').innerHTML = orders.map(orderCardHtml).join('')
-        + '<div style="font-size:11.5px;color:var(--ink-faint);line-height:1.7;text-align:center;">見積り・デザインの詳細については、このトークルームで担当者にご確認ください。</div>';
+      ordersData = orderList || [];
+      if(!ordersData.length){ showScreen('empty-screen'); return; }
+      document.getElementById('orders-container').innerHTML = ordersData.map(orderRowHtml).join('');
       showScreen('status-screen');
     })
     .catch(function(err){ console.error(err); showError('サーバーとの通信でエラーが発生しました。'); });
