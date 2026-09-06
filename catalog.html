@@ -1,0 +1,65 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MarineBlue カタログ</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Shippori+Mincho:wght@600;800&family=Zen+Kaku+Gothic+New:wght@400;500;700&display=swap">
+<style>
+  :root{
+    --bg:#eef3f6;
+    --surface:#ffffff;
+    --surface-2:#f7fafb;
+    --ink:#152430;
+    --ink-muted:#51636e;
+    --ink-faint:#8399a4;
+    --line:#d7e1e6;
+    --line-strong:#c3d2d9;
+    --accent:#0d4a72;
+    --accent-soft:#e3edf3;
+  }
+  *{box-sizing:border-box;}
+  html,body{height:100%;}
+  body{margin:0;background:var(--surface);color:var(--ink);font-family:"Zen Kaku Gothic New","Hiragino Kaku Gothic ProN",sans-serif;}
+  a{text-decoration:none;color:inherit;}
+</style>
+</head>
+<body>
+
+<div style="min-height:100vh;display:flex;flex-direction:column;">
+  <div style="padding:18px 18px 0;text-align:center;">
+    <div style="font-family:'Shippori Mincho',serif;font-weight:700;font-size:15px;">商品カタログ</div>
+    <div style="font-size:11.5px;color:var(--ink-faint);margin-top:4px;">見たいカタログをタップしてください</div>
+  </div>
+
+  <div id="catalog-list" style="flex:1;padding:20px 18px;display:flex;flex-direction:column;gap:12px;"></div>
+</div>
+
+<script>
+/* カタログを追加・入れ替える場合はここを編集してください。
+   file には catalogs フォルダに置いたPDF・画像ファイル名を指定します
+   （例：このindex/catalog.htmlと同じ階層に catalogs/catalog-2026a.pdf を置く）。
+   type は 'pdf' または 'image' のどちらか。 */
+const CATALOGS = [
+  { name: '定番Tシャツ・ポロシャツカタログ', file: 'catalogs/catalog-1.pdf', type: 'pdf' },
+  { name: 'パーカー・スウェットカタログ', file: 'catalogs/catalog-2.pdf', type: 'pdf' },
+  { name: 'キャップ・バッグ・小物カタログ', file: 'catalogs/catalog-3.pdf', type: 'pdf' },
+  { name: 'キッズ・グローブサイズカタログ', file: 'catalogs/catalog-4.pdf', type: 'pdf' }
+];
+
+function esc(s){ const d=document.createElement('div'); d.textContent=s; return d.innerHTML; }
+document.getElementById('catalog-list').innerHTML = CATALOGS.map(function(c){
+  return `<a href="${esc(c.file)}" target="_blank" rel="noopener" style="display:flex;align-items:center;gap:14px;border:1.5px solid var(--line);border-radius:14px;padding:16px;">
+    <div style="width:42px;height:42px;border-radius:10px;background:var(--accent-soft);flex:none;display:flex;align-items:center;justify-content:center;">
+      <svg width="19" height="19" viewBox="0 0 20 20" fill="none" stroke="#0d4a72" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M5 2.5h7l3 3v12a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1v-14a1 1 0 0 1 1-1z"></path><path d="M7 8h6M7 11h6M7 14h3.5"></path></svg>
+    </div>
+    <div style="flex:1;min-width:0;">
+      <div style="font-size:13.5px;font-weight:600;">${esc(c.name)}</div>
+      <div style="font-size:11px;color:var(--ink-faint);margin-top:2px;">${c.type==='pdf'?'PDFで開く':'画像を見る'}</div>
+    </div>
+    <svg width="16" height="16" viewBox="0 0 20 20" fill="none" stroke="#8399a4" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="m7.5 4 6 6-6 6"></path></svg>
+  </a>`;
+}).join('') || '<div style="text-align:center;color:var(--ink-faint);font-size:12.5px;">カタログが登録されていません</div>';
+</script>
+</body>
+</html>
