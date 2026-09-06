@@ -232,6 +232,22 @@ let itemSearchResults = [];
 let colorOptions = [];
 let productStock = [];
 
+/* 商品コード・商品名・価格だけの一覧を起動時に1回だけ取得し、以降の検索は端末内でフィルタする。
+   カタログが増えて数千点規模になっても、検索のたびにサーバーへ問い合わせない。 */
+let productIndex = [];
+let productIndexLoaded = false;
+function loadProductIndex(){
+  fetch(CUSTOMER_API_URL + '?mode=itemIndex')
+    .then(function(res){ return res.json(); })
+    .then(function(data){
+      productIndex = (data || []).map(function(it){ return { itemCode:String(it.itemCode), itemName:String(it.itemName||''), price: it.price }; });
+      productIndexLoaded = true;
+      if(document.getElementById('item-search').value.trim()) searchItems();
+    })
+    .catch(function(err){ console.error('商品データの取得に失敗: ', err); });
+}
+loadProductIndex();
+
 const ORDER_SCREEN_IDS = {step1:'order-step-1',step2:'order-step-2',step3:'order-step-3',complete:'order-complete'};
 function showOrderScreen(name){
   Object.entries(ORDER_SCREEN_IDS).forEach(([k,id])=>{ document.getElementById(id).hidden = k!==name; });
@@ -244,12 +260,11 @@ function goToStep(n){
   if(n===3) renderSummary();
 }
 
-let itemSearchTimer=null;
 function searchItems(){
-  clearTimeout(itemSearchTimer);
-  const q = document.getElementById('item-search').value.trim();
+  const qRaw = document.getElementById('item-search').value.trim();
+  const q = qRaw.toLowerCase();
   const note = document.getElementById('item-empty-note');
-  if(!q){
+  if(!qRaw){
     itemSearchResults=[];
     document.getElementById('item-list').innerHTML='';
     note.textContent='型番や商品名を入力して検索してください';
@@ -266,17 +281,18 @@ function searchItems(){
     updateTotal();
     return;
   }
-  itemSearchTimer = setTimeout(function(){
-    fetch(CUSTOMER_API_URL + '?mode=productSearch&q=' + encodeURIComponent(q))
-      .then(function(res){ return res.json(); })
-      .then(function(data){
-        itemSearchResults = data || [];
-        renderItemList();
-        note.style.display = itemSearchResults.length ? 'none' : 'block';
-        note.textContent = '一致する商品が見つかりませんでした';
-      })
-      .catch(function(err){ console.error('商品検索に失敗: ', err); });
-  }, 300);
+  if(!productIndexLoaded){
+    document.getElementById('item-list').innerHTML='';
+    note.textContent='商品データを読み込み中です…';
+    note.style.display='block';
+    return;
+  }
+  itemSearchResults = productIndex.filter(function(it){
+    return it.itemCode.toLowerCase().indexOf(q)>=0 || it.itemName.toLowerCase().indexOf(q)>=0;
+  }).slice(0,50);
+  renderItemList();
+  note.style.display = itemSearchResults.length ? 'none' : 'block';
+  note.textContent = '一致する商品が見つかりませんでした';
 }
 function renderItemList(){
   document.getElementById('item-list').innerHTML = itemSearchResults.map(f=>`
