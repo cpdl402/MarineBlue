@@ -102,15 +102,22 @@
         <div style="font-size:14.5px;font-weight:600;margin-bottom:3px;">サイズ・数量</div>
         <div id="fabric-selected-name" style="font-size:12px;color:var(--ink-faint);margin-bottom:12px;"></div>
         <div id="size-rows" style="display:flex;flex-direction:column;gap:6px;"></div>
+        <button class="btn-outline" style="width:100%;height:44px;font-size:13px;margin-top:14px;border:1.5px solid var(--accent);color:var(--accent);background:var(--surface);border-radius:9px;cursor:pointer;" onclick="addToCart()">＋ カートに追加</button>
+      </div>
+
+      <div id="cart-section" hidden>
+        <div style="height:1px;background:var(--line);margin:22px 0 16px;"></div>
+        <div style="font-size:14.5px;font-weight:600;margin-bottom:12px;">カート内の商品</div>
+        <div id="cart-list" style="display:flex;flex-direction:column;gap:8px;"></div>
       </div>
     </div>
 
     <div style="background:var(--surface);border-top:1px solid var(--line);padding:12px 18px 18px;display:flex;align-items:center;gap:14px;">
       <div>
-        <div style="font-size:11px;color:var(--ink-faint);">合計</div>
+        <div style="font-size:11px;color:var(--ink-faint);">カート合計</div>
         <div class="mono num" id="qty-total" style="font-size:16px;font-weight:600;">–</div>
       </div>
-      <button class="btn-primary" style="flex:1;height:46px;font-size:14px;" onclick="goToStep(2)">次へ：デザイン</button>
+      <button class="btn-primary" style="flex:1;height:46px;font-size:14px;" onclick="proceedToDesign()">次へ：デザイン</button>
     </div>
   </div>
 
@@ -230,6 +237,7 @@ function sizeLines(sizes, opts){
 }
 
 let orderForm = { itemCode:null, itemName:'', price:null, colorCode:null, colorName:'', sizes:{}, designImage:null, step:1 };
+let cart = [];
 let lineProfile = null;
 let itemSearchResults = [];
 let colorOptions = [];
@@ -257,14 +265,59 @@ function showOrderScreen(name){
   window.scrollTo(0,0);
 }
 function goToStep(n){
-  if(n===2){
-    if(!orderForm.itemCode || !orderForm.colorCode){ alert('商品とカラーを選択してください。'); return; }
-    const total = Object.values(orderForm.sizes).reduce((a,b)=>a+b,0);
-    if(total<=0){ alert('サイズを選択し、数量を1枚以上入力してください。'); return; }
-  }
   orderForm.step = n;
   showOrderScreen('step'+n);
   if(n===3) renderSummary();
+}
+function currentSelectionTotal(){
+  return Object.values(orderForm.sizes).reduce((a,b)=>a+b,0);
+}
+function addToCart(){
+  if(!orderForm.itemCode || !orderForm.colorCode){ alert('商品とカラーを選択してください。'); return; }
+  if(currentSelectionTotal()<=0){ alert('サイズを選択し、数量を1枚以上入力してください。'); return; }
+  cart.push({
+    itemCode: orderForm.itemCode, itemName: orderForm.itemName,
+    colorCode: orderForm.colorCode, colorName: orderForm.colorName,
+    sizes: Object.assign({}, orderForm.sizes)
+  });
+  resetItemSelection_();
+  document.getElementById('item-search').value = '';
+  document.getElementById('item-list').innerHTML = '';
+  const note = document.getElementById('item-empty-note');
+  note.textContent = '型番や商品名を入力して検索してください';
+  note.style.display = 'block';
+  renderCart();
+}
+function removeFromCart(idx){
+  cart.splice(idx,1);
+  renderCart();
+}
+function cartTotalQty(){
+  return cart.reduce(function(sum,item){ return sum + Object.values(item.sizes).reduce((a,b)=>a+b,0); },0);
+}
+function renderCart(){
+  document.getElementById('cart-section').hidden = cart.length===0;
+  document.getElementById('cart-list').innerHTML = cart.map(function(item,idx){
+    const total = Object.values(item.sizes).reduce((a,b)=>a+b,0);
+    return `<div style="display:flex;align-items:center;justify-content:space-between;gap:10px;border:1px solid var(--line);border-radius:12px;padding:12px 14px;">
+      <div style="flex:1;min-width:0;">
+        <div style="font-size:13px;font-weight:600;">${esc(item.itemCode)} ${esc(item.itemName)}${item.colorName?' ／ '+esc(item.colorName):''}</div>
+        <div style="margin-top:4px;">${sizeLines(item.sizes,{size:'11.5px',muted:true,pad:'1px 0'})}</div>
+      </div>
+      <div style="display:flex;align-items:center;gap:10px;flex:none;">
+        <span class="mono num" style="font-size:12.5px;">計${total}枚</span>
+        <button onclick="removeFromCart(${idx})" style="border:none;background:none;color:var(--bad);font-size:11.5px;cursor:pointer;">削除</button>
+      </div>
+    </div>`;
+  }).join('');
+  updateTotal();
+}
+function proceedToDesign(){
+  if(orderForm.itemCode && orderForm.colorCode && currentSelectionTotal()>0){
+    addToCart();
+  }
+  if(cart.length===0){ alert('商品を選択して、カートに追加してください。'); return; }
+  goToStep(2);
 }
 
 function resetItemSelection_(){
@@ -387,7 +440,7 @@ function changeQty(sz, delta){
   renderSizeRows();
 }
 function updateTotal(){
-  const total = Object.values(orderForm.sizes).reduce((a,b)=>a+b,0);
+  const total = cartTotalQty();
   document.getElementById('qty-total').innerHTML = total+`<span style="font-size:12px;color:var(--ink-faint);font-family:'Zen Kaku Gothic New',sans-serif;">枚</span>`;
 }
 
@@ -412,11 +465,16 @@ function onDesignFileChange(e){
 }
 
 function renderSummary(){
-  const total = Object.values(orderForm.sizes).reduce((a,b)=>a+b,0);
+  const total = cartTotalQty();
   const dateVal = document.getElementById('cust-date').value;
+  const itemBlocks = cart.map(function(item){
+    return `<div style="margin-bottom:8px;">
+      <div style="font-size:12.5px;color:var(--ink-muted);margin-bottom:2px;">${esc(item.itemCode)} ${esc(item.itemName)} ／ ${esc(item.colorName)}</div>
+      ${sizeLines(item.sizes,{divider:true,size:'12.5px',muted:true})}
+    </div>`;
+  }).join('');
   document.getElementById('order-summary').innerHTML = `
-    <div style="font-size:12.5px;color:var(--ink-muted);margin-bottom:4px;">${esc(orderForm.itemCode)} ${esc(orderForm.itemName)} ／ ${esc(orderForm.colorName)}</div>
-    ${sizeLines(orderForm.sizes,{divider:true,size:'12.5px',muted:true})}
+    ${itemBlocks}
     <div style="display:flex;justify-content:space-between;padding:7px 0 2px;">
       <span style="font-size:12.5px;font-weight:600;">合計</span>
       <span class="mono" style="font-size:12.5px;font-weight:600;">${total}枚</span>
@@ -436,11 +494,7 @@ function submitOrder(){
     lineUserId: lineProfile.userId,
     lineDisplayName: lineProfile.displayName,
     contact: contact,
-    fabricId: orderForm.itemCode,
-    fabricName: orderForm.itemName,
-    colorCode: orderForm.colorCode,
-    colorName: orderForm.colorName,
-    sizes: orderForm.sizes,
+    items: cart,
     desiredDate: desiredDate,
     designNote: designNote,
     designImageBase64: orderForm.designImage ? orderForm.designImage.base64 : '',
@@ -455,15 +509,16 @@ function submitOrder(){
   fetch(CUSTOMER_API_URL, {
     method: 'POST',
     headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-    body: JSON.stringify({ apiAction: 'createOrderFromLiff', payload: payload })
+    body: JSON.stringify({ apiAction: 'createOrdersFromLiffCart', payload: payload })
   })
     .then(function(res){ return res.json(); })
     .then(function(result){
       btn.disabled = false;
       btn.textContent = 'この内容で注文する';
       if(!result.ok){ gsError(result.error || '注文の登録に失敗しました'); return; }
+      cart = [];
       showOrderScreen('complete');
-      document.getElementById('complete-order-id').textContent = '注文番号：#'+result.order.id;
+      document.getElementById('complete-order-id').textContent = '注文番号：#'+(result.result.orderIds||[]).join('、#');
     })
     .catch(function(err){
       btn.disabled = false;
