@@ -240,7 +240,7 @@ function loadProductIndex(){
   fetch(CUSTOMER_API_URL + '?mode=itemIndex')
     .then(function(res){ return res.json(); })
     .then(function(data){
-      productIndex = (data || []).map(function(it){ return { itemCode:String(it.itemCode), itemName:String(it.itemName||''), price: it.price }; });
+      productIndex = (data || []).map(function(it){ return { itemCode:String(it.itemCode), itemName:String(it.itemName||''), price: it.price, modelNo:String(it.modelNo||'') }; });
       productIndexLoaded = true;
       if(document.getElementById('item-search').value.trim()) searchItems();
     })
@@ -291,8 +291,11 @@ function searchItems(){
     note.style.display='block';
     return;
   }
+  const qDigits = q.replace(/\D/g,'');
   itemSearchResults = productIndex.filter(function(it){
-    return it.itemCode.toLowerCase().indexOf(q)>=0 || it.itemName.toLowerCase().indexOf(q)>=0;
+    const modelNo = it.modelNo.toLowerCase();
+    return it.itemCode.toLowerCase().indexOf(q)>=0 || it.itemName.toLowerCase().indexOf(q)>=0 || modelNo.indexOf(q)>=0
+      || (qDigits && modelNo.replace(/\D/g,'').indexOf(qDigits)>=0);
   }).slice(0,50);
   renderItemList();
   note.style.display = itemSearchResults.length ? 'none' : 'block';
@@ -324,6 +327,7 @@ function selectItem(code){
       colorOptions = colors || [];
       renderColorList();
       document.getElementById('color-section').hidden = false;
+      if(colorOptions.length===1){ selectColor(colorOptions[0].colorCode); }
     })
     .catch(function(err){ console.error('カラー取得に失敗: ', err); });
 }
