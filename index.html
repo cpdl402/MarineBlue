@@ -569,6 +569,7 @@ function initLiff(){
         if(!profile){ step('profile is empty(post-login redirect expected)'); return; }
         step('getProfile OK: ' + profile.displayName);
         clearTimeout(liffWatchdog);
+        try{ sessionStorage.removeItem('liffRetried'); }catch(e){}
         lineProfile = profile;
         document.getElementById('liff-name').textContent = profile.displayName;
         document.getElementById('liff-avatar').src = profile.pictureUrl || '';
@@ -576,8 +577,15 @@ function initLiff(){
         showOrderScreen('step1');
       })
       .catch(function(err){
+        const msg = (err && err.message) ? err.message : String(err);
+        if(msg.indexOf('access token expired')>=0 && !sessionStorage.getItem('liffRetried')){
+          sessionStorage.setItem('liffRetried','1');
+          try{ liff.logout(); }catch(e){}
+          location.reload();
+          return;
+        }
         clearTimeout(liffWatchdog);
-        showLiffError('init/getProfileエラー: ' + ((err && err.message) ? err.message : String(err)) + (err && err.code ? (' / code: ' + err.code) : ''));
+        showLiffError('init/getProfileエラー: ' + msg + (err && err.code ? (' / code: ' + err.code) : ''));
       });
   }catch(err){
     clearTimeout(liffWatchdog);
