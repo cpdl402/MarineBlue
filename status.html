@@ -203,9 +203,21 @@ function initLiff(){
       })
       .then(function(profile){
         if(!profile) return;
+        try{ sessionStorage.removeItem('liffRetried'); }catch(e){}
         loadStatus(profile.userId);
       })
-      .catch(function(err){ showError('初期化エラー: ' + ((err&&err.message)?err.message:String(err))); });
+      .catch(function(err){
+        const msg = (err&&err.message)?err.message:String(err);
+        /* アクセストークンの期限切れは既知のLIFFの挙動。ログアウトして読み込み直せば直るので自動で行う
+           （無限ループ防止のため、1回だけ自動リトライする） */
+        if(msg.indexOf('access token expired')>=0 && !sessionStorage.getItem('liffRetried')){
+          sessionStorage.setItem('liffRetried','1');
+          try{ liff.logout(); }catch(e){}
+          location.reload();
+          return;
+        }
+        showError('初期化エラー: ' + msg);
+      });
   }catch(err){
     showError('同期エラー: ' + ((err&&err.message)?err.message:String(err)));
   }
