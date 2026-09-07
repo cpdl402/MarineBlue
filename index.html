@@ -241,7 +241,7 @@ function loadProductIndex(){
   fetch(CUSTOMER_API_URL + '?mode=itemIndex')
     .then(function(res){ return res.json(); })
     .then(function(data){
-      productIndex = (data || []).map(function(it){ return { itemCode:String(it.itemCode), itemName:String(it.itemName||''), price: it.price, modelNo:String(it.modelNo||'') }; });
+      productIndex = (data || []).map(function(it){ return { itemCode:String(it.itemCode), itemName:String(it.itemName||''), price: it.price, modelNo:String(it.modelNo||''), sizeName:String(it.sizeName||'') }; });
       productIndexLoaded = true;
       if(document.getElementById('item-search').value.trim()) searchItems();
     })
@@ -265,25 +265,29 @@ function goToStep(n){
   if(n===3) renderSummary();
 }
 
+function resetItemSelection_(){
+  orderForm.itemCode=null;
+  orderForm.itemName='';
+  orderForm.colorCode=null;
+  orderForm.colorName='';
+  orderForm.sizes={};
+  colorOptions=[];
+  productStock=[];
+  document.getElementById('color-section').hidden=true;
+  document.getElementById('size-section').hidden=true;
+  updateTotal();
+}
 function searchItems(){
   const qRaw = document.getElementById('item-search').value.trim();
   const q = qRaw.toLowerCase();
   const note = document.getElementById('item-empty-note');
+  /* 検索するたびに、前回選択していたカラー・サイズを引きずらないようにリセットする */
+  resetItemSelection_();
   if(!qRaw){
     itemSearchResults=[];
     document.getElementById('item-list').innerHTML='';
     note.textContent='型番や商品名を入力して検索してください';
     note.style.display='block';
-    orderForm.itemCode=null;
-    orderForm.itemName='';
-    orderForm.colorCode=null;
-    orderForm.colorName='';
-    orderForm.sizes={};
-    colorOptions=[];
-    productStock=[];
-    document.getElementById('color-section').hidden=true;
-    document.getElementById('size-section').hidden=true;
-    updateTotal();
     return;
   }
   if(!productIndexLoaded){
@@ -306,7 +310,7 @@ function renderItemList(){
   document.getElementById('item-list').innerHTML = itemSearchResults.map(f=>`
     <div class="fabric-card ${f.itemCode===orderForm.itemCode?'selected':''}" onclick="selectItem('${f.itemCode}')">
       <div style="flex:1;min-width:0;">
-        <div style="display:flex;align-items:center;gap:6px;"><span class="mono" style="font-size:11px;color:${f.itemCode===orderForm.itemCode?'var(--accent)':'var(--ink-faint)'};">${esc(f.itemCode)}</span><span style="font-size:13.5px;font-weight:600;">${esc(f.itemName)}</span></div>
+        <div style="display:flex;align-items:center;gap:6px;"><span class="mono" style="font-size:11px;color:${f.itemCode===orderForm.itemCode?'var(--accent)':'var(--ink-faint)'};">${esc(f.itemCode)}</span><span style="font-size:13.5px;font-weight:600;">${esc(f.itemName)}${f.sizeName?'（'+esc(f.sizeName)+'）':''}</span></div>
       </div>
       <div class="radio">${f.itemCode===orderForm.itemCode?'<svg width="12" height="12" viewBox="0 0 20 20" fill="none" stroke="#fff" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m4 10 4 4 8-9"></path></svg>':''}</div>
     </div>`).join('');
