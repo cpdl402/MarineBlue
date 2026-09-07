@@ -134,7 +134,9 @@
       <div style="font-size:14.5px;font-weight:600;margin-bottom:3px;">デザインについて教えてください</div>
       <div style="font-size:12px;color:var(--ink-faint);margin-bottom:16px;">画像がなくてもご要望だけで結構です</div>
 
-      <div id="upload-box" onclick="toggleUpload()" style="border:1.5px dashed var(--line-strong);border-radius:14px;padding:22px;text-align:center;cursor:pointer;">
+      <input id="design-file-input" type="file" accept="image/*" style="display:none;" onchange="onDesignFileChange(event)">
+      <div id="upload-box" onclick="document.getElementById('design-file-input').click()" style="border:1.5px dashed var(--line-strong);border-radius:14px;padding:22px;text-align:center;cursor:pointer;">
+        <img id="upload-preview" hidden style="max-width:100%;max-height:160px;border-radius:8px;margin-bottom:10px;">
         <div id="upload-icon" style="width:40px;height:40px;border-radius:10px;background:var(--accent-soft);margin:0 auto 10px;display:flex;align-items:center;justify-content:center;">
           <svg width="19" height="19" viewBox="0 0 20 20" fill="none" stroke="#0d4a72" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13V4M6 8l4-4 4 4"></path><path d="M4 14v1.5A1.5 1.5 0 0 0 5.5 17h9a1.5 1.5 0 0 0 1.5-1.5V14"></path></svg>
         </div>
@@ -227,7 +229,7 @@ function sizeLines(sizes, opts){
   return rows || `<div style="font-size:${opts.size||'13px'};color:var(--ink-faint);">サイズ未選択</div>`;
 }
 
-let orderForm = { itemCode:null, itemName:'', price:null, colorCode:null, colorName:'', sizes:{}, uploaded:false, step:1 };
+let orderForm = { itemCode:null, itemName:'', price:null, colorCode:null, colorName:'', sizes:{}, designImage:null, step:1 };
 let lineProfile = null;
 let itemSearchResults = [];
 let colorOptions = [];
@@ -389,19 +391,24 @@ function updateTotal(){
   document.getElementById('qty-total').innerHTML = total+`<span style="font-size:12px;color:var(--ink-faint);font-family:'Zen Kaku Gothic New',sans-serif;">枚</span>`;
 }
 
-function toggleUpload(){
-  orderForm.uploaded = !orderForm.uploaded;
-  const icon = document.getElementById('upload-icon');
-  const text = document.getElementById('upload-text');
-  if(orderForm.uploaded){
-    icon.style.background='var(--good-soft)';
-    icon.innerHTML='<svg width="19" height="19" viewBox="0 0 20 20" fill="none" stroke="#2f7d5c" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m4 10 4 4 8-9"></path></svg>';
-    text.textContent='design_ref.png をアップロードしました';
-  } else {
-    icon.style.background='var(--accent-soft)';
-    icon.innerHTML='<svg width="19" height="19" viewBox="0 0 20 20" fill="none" stroke="#0d4a72" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13V4M6 8l4-4 4 4"></path><path d="M4 14v1.5A1.5 1.5 0 0 0 5.5 17h9a1.5 1.5 0 0 0 1.5-1.5V14"></path></svg>';
-    text.textContent='タップして画像をアップロード';
-  }
+const MAX_DESIGN_FILE_MB = 8;
+function onDesignFileChange(e){
+  const file = e.target.files && e.target.files[0];
+  if(!file) return;
+  if(!file.type.startsWith('image/')){ alert('画像ファイルを選択してください。'); e.target.value=''; return; }
+  if(file.size > MAX_DESIGN_FILE_MB*1024*1024){ alert('画像サイズが大きすぎます（'+MAX_DESIGN_FILE_MB+'MB以下にしてください）。'); e.target.value=''; return; }
+  const reader = new FileReader();
+  reader.onload = function(){
+    const dataUrl = reader.result;
+    orderForm.designImage = { base64: dataUrl.split(',')[1], mime: file.type, name: file.name };
+    const preview = document.getElementById('upload-preview');
+    preview.src = dataUrl;
+    preview.hidden = false;
+    document.getElementById('upload-icon').hidden = true;
+    document.getElementById('upload-text').textContent = file.name + ' を添付しました（タップで変更）';
+  };
+  reader.onerror = function(){ alert('画像の読み込みに失敗しました。'); };
+  reader.readAsDataURL(file);
 }
 
 function renderSummary(){
@@ -415,7 +422,7 @@ function renderSummary(){
       <span class="mono" style="font-size:12.5px;font-weight:600;">${total}枚</span>
     </div>
     <div style="height:1px;background:var(--line);margin:10px 0;"></div>
-    <div style="font-size:12.5px;color:var(--ink-muted);">デザイン：${orderForm.uploaded?'画像あり':'画像なし'}${document.getElementById('design-text').value.trim()?'・メモあり':''}</div>
+    <div style="font-size:12.5px;color:var(--ink-muted);">デザイン：${orderForm.designImage?'画像あり':'画像なし'}${document.getElementById('design-text').value.trim()?'・メモあり':''}</div>
     <div style="font-size:12.5px;color:var(--ink-muted);margin-top:4px;">納品希望日：${dateVal || '未指定'}</div>`;
 }
 
@@ -436,7 +443,9 @@ function submitOrder(){
     sizes: orderForm.sizes,
     desiredDate: desiredDate,
     designNote: designNote,
-    designUploaded: orderForm.uploaded
+    designImageBase64: orderForm.designImage ? orderForm.designImage.base64 : '',
+    designImageName: orderForm.designImage ? orderForm.designImage.name : '',
+    designImageMime: orderForm.designImage ? orderForm.designImage.mime : ''
   };
 
   const btn = document.getElementById('submit-btn');
