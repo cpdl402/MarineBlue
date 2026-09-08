@@ -328,6 +328,7 @@ function resetItemSelection_(){
   orderForm.sizes={};
   colorOptions=[];
   productStock=[];
+  stockByColor={};
   document.getElementById('color-section').hidden=true;
   document.getElementById('size-section').hidden=true;
   updateTotal();
@@ -370,6 +371,7 @@ function renderItemList(){
       <div class="radio">${f.itemCode===orderForm.itemCode?'<svg width="12" height="12" viewBox="0 0 20 20" fill="none" stroke="#fff" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m4 10 4 4 8-9"></path></svg>':''}</div>
     </div>`).join('');
 }
+let stockByColor = {};
 function selectItem(code){
   const item = itemSearchResults.find(x=>x.itemCode===code);
   if(!item) return;
@@ -380,16 +382,26 @@ function selectItem(code){
   orderForm.colorName = '';
   orderForm.sizes = {};
   renderItemList();
+  document.getElementById('color-section').hidden = true;
   document.getElementById('size-section').hidden = true;
-  fetch(CUSTOMER_API_URL + '?mode=productColors&code=' + encodeURIComponent(code))
+  /* カラー一覧とサイズ在庫を1回のリクエストでまとめて取得する（以前はカラー取得→サイズ取得の
+     2回のサーバー往復が発生しており、選択のたびに待たされて遅く感じられていたため） */
+  fetch(CUSTOMER_API_URL + '?mode=productDetail&code=' + encodeURIComponent(code))
     .then(function(res){ return res.json(); })
-    .then(function(colors){
-      colorOptions = colors || [];
-      renderColorList();
-      document.getElementById('color-section').hidden = false;
-      if(colorOptions.length===1){ selectColor(colorOptions[0].colorCode); }
+    .then(function(detail){
+      colorOptions = (detail && detail.colors) || [];
+      stockByColor = (detail && detail.stockByColor) || {};
+      if(colorOptions.length<=1){
+        /* カラー展開が無い商品（自社商品などカラーコードが空の1系統のみ）は、
+           カラー選択を挟まずそのままサイズを表示する */
+        document.getElementById('color-section').hidden = true;
+        selectColor(colorOptions.length ? colorOptions[0].colorCode : '');
+      } else {
+        renderColorList();
+        document.getElementById('color-section').hidden = false;
+      }
     })
-    .catch(function(err){ console.error('カラー取得に失敗: ', err); });
+    .catch(function(err){ console.error('商品詳細の取得に失敗: ', err); });
 }
 function renderColorList(){
   document.getElementById('color-list').innerHTML = colorOptions.map(c=>`
@@ -401,16 +413,13 @@ function selectColor(colorCode){
   orderForm.colorName = c ? c.colorName : '';
   orderForm.sizes = {};
   renderColorList();
-  fetch(CUSTOMER_API_URL + '?mode=productStock&code=' + encodeURIComponent(orderForm.itemCode) + '&color=' + encodeURIComponent(colorCode))
-    .then(function(res){ return res.json(); })
-    .then(function(stock){
-      productStock = stock || [];
-      orderForm.sizes = {};
-      productStock.forEach(function(row){ orderForm.sizes[row.size] = 0; });
-      document.getElementById('size-section').hidden = false;
-      renderSizeRows();
-    })
-    .catch(function(err){ console.error('在庫取得に失敗: ', err); });
+  /* すでにselectItem時点で全カラー分のサイズ在庫を取得済みなので、ここではサーバーへ
+     再度問い合わせない */
+  productStock = stockByColor[colorCode] || [];
+  orderForm.sizes = {};
+  productStock.forEach(function(row){ orderForm.sizes[row.size] = 0; });
+  document.getElementById('size-section').hidden = false;
+  renderSizeRows();
 }
 function renderSizeRows(){
   document.getElementById('fabric-selected-name').textContent = orderForm.itemCode+' '+orderForm.itemName+' ／ '+orderForm.colorName;
