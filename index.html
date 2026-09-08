@@ -1,1054 +1,605 @@
-/**
- * MarineBlue お客様ページ — サーバーサイド (Google Apps Script)
- *
- * これは運営者用（admin）とは別の、独立した Apps Script プロジェクトです。
- * お客様が誰でもアクセスできる公開ウェブアプリとして、
- * このプロジェクトだけをデプロイします（admin側とは別URL）。
- *
- * 公開してよい・安全な処理だけをここに置いています：
- *  - 新規注文の作成（createOrder）
- *  - 氏名＋メールアドレスによる自分の注文の照会（lookupOrderServer）
- *  - 自分の注文へのメッセージ送信（addMessage）
- * 在庫の変更や他のお客様の注文一覧取得など、運営者専用の処理は含めていません。
- *
- * 使い方は SETUP.md を参照してください。
- * 下の SPREADSHEET_ID と ADMIN_NOTIFY_EMAIL を、ご自身の値に書き換えてから使ってください。
- */
-
-/** 受注管理用スプレッドシートのID（URLの https://docs.google.com/spreadsheets/d/【ここ】/edit の部分） */
-const SPREADSHEET_ID = '1E9TNf0-saRq03CgQZSJnfPfBb-WZ2BnZBMoXsqLpg8s';
-
-/** 新規注文が入ったときに通知を受け取る運営者のメールアドレス（複数の場合はカンマ区切り） */
-const ADMIN_NOTIFY_EMAIL = 'ここに運営者のメールアドレスを貼り付け';
-
-const SHEETS = {
-  ORDERS: 'Orders',
-  ORDER_ITEMS: 'OrderItems',
-  MESSAGES: 'Messages',
-  PRODUCTS: 'Products',
-  BACKORDERS: 'Backorders'
-};
-/* Products シートは、実データのJANコードCSVをそのままインポートした想定のヘッダー（日本語のまま） */
-const PRODUCT_COLS = { code:'商品コード', name:'商品名', colorCode:'カラーコード', colorName:'カラー名', sizeCode:'サイズコード', sizeName:'サイズ名', qty:'在庫数', price:'上代', modelNo:'型番' };
-const LEGACY_SIZE_KEYS = ['XS', 'S', 'M', 'L', 'XL', 'XXL'];
-/* SizesJson列（実際のサイズ内訳）があればそれを使い、無い古い注文だけ従来のSizeXS〜SizeXXL列から組み立てる */
-function parseSizes_(r) {
-  if (r.SizesJson) {
-    try { return JSON.parse(r.SizesJson); } catch (e) { /* fall through */ }
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MarineBlue ご注文</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Shippori+Mincho:wght@600;800&family=Zen+Kaku+Gothic+New:wght@400;500;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap">
+<script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
+<style>
+  :root{
+    --bg:#eef3f6;
+    --surface:#ffffff;
+    --surface-2:#f7fafb;
+    --ink:#152430;
+    --ink-muted:#51636e;
+    --ink-faint:#8399a4;
+    --line:#d7e1e6;
+    --line-strong:#c3d2d9;
+    --accent:#0d4a72;
+    --accent-deep:#083a5c;
+    --accent-soft:#e3edf3;
+    --good:#2f7d5c;
+    --good-soft:#e1f0e8;
+    --bad:#b3413a;
+    --bad-soft:#fbe7e4;
   }
-  const sizes = {};
-  LEGACY_SIZE_KEYS.forEach(function (k) { sizes[k] = Number(r['Size' + k]) || 0; });
-  return sizes;
+  *{box-sizing:border-box;}
+  [hidden]{display:none!important;}
+  html,body{height:100%;}
+  body{margin:0;background:var(--surface);color:var(--ink);font-family:"Zen Kaku Gothic New","Hiragino Kaku Gothic ProN",sans-serif;}
+  button{font-family:inherit;}
+  .mono{font-family:"IBM Plex Mono",ui-monospace,monospace;}
+  .num{font-variant-numeric:tabular-nums;}
+  input,textarea{font-family:inherit;}
+
+  .navicon{width:34px;height:34px;border-radius:10px;display:flex;align-items:center;justify-content:center;cursor:pointer;border:none;background:none;padding:0;}
+  .btn-primary{background:var(--accent);color:#fff;border:none;border-radius:9px;font-weight:500;cursor:pointer;}
+  .btn-primary:hover{background:var(--accent-deep);}
+  .btn-primary:disabled{opacity:.5;cursor:default;}
+  .btn-ghost{background:var(--surface);color:var(--ink-muted);border:1px solid var(--line-strong);border-radius:9px;cursor:pointer;}
+
+  .fabric-card{border:1.5px solid var(--line);border-radius:14px;padding:13px 14px;display:flex;gap:12px;align-items:center;cursor:pointer;}
+  .fabric-card.selected{border-color:var(--accent);background:var(--accent-soft);}
+  .radio{width:22px;height:22px;border-radius:50%;border:1.5px solid var(--line-strong);flex:none;display:flex;align-items:center;justify-content:center;}
+  .fabric-card.selected .radio{background:var(--accent);border-color:var(--accent);}
+  .qty-btn{width:30px;height:30px;border-radius:8px;border:1px solid var(--line-strong);background:var(--surface);font-size:15px;color:var(--ink);cursor:pointer;line-height:1;}
+  .qty-btn:hover{background:var(--surface-2);}
+
+  .page{min-height:100vh;display:flex;flex-direction:column;}
+  .screen{display:flex;flex-direction:column;flex:1;min-height:0;}
+</style>
+</head>
+<body>
+
+<div class="page">
+
+  <div id="liff-loading" style="flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;">
+    <div style="width:34px;height:34px;border-radius:50%;border:3px solid var(--line);border-top-color:var(--accent);animation:spin 0.8s linear infinite;"></div>
+    <div id="liff-loading-text" style="font-size:12.5px;color:var(--ink-muted);">読み込み中…</div>
+    <div id="liff-debug" hidden class="mono" style="font-size:10px;color:var(--ink-faint);max-width:88%;text-align:left;white-space:pre-wrap;line-height:1.6;"></div>
+  </div>
+  <style>@keyframes spin{to{transform:rotate(360deg);}}</style>
+
+  <div id="liff-error" hidden style="flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:32px;text-align:center;gap:10px;">
+    <div style="font-size:13.5px;color:var(--bad);">読み込みに失敗しました</div>
+    <div id="liff-error-detail" style="font-size:11.5px;color:var(--ink-faint);line-height:1.7;"></div>
+  </div>
+
+  <div id="order-step-1" class="screen" hidden>
+    <div style="padding:18px 18px 0;">
+      <div style="display:flex;align-items:center;justify-content:center;">
+        <div style="font-family:'Shippori Mincho',serif;font-weight:700;font-size:15px;">ご注文</div>
+      </div>
+      <div style="display:flex;gap:6px;margin-top:16px;">
+        <div style="flex:1;height:4px;border-radius:2px;background:var(--accent);"></div>
+        <div style="flex:1;height:4px;border-radius:2px;background:var(--line);"></div>
+        <div style="flex:1;height:4px;border-radius:2px;background:var(--line);"></div>
+      </div>
+    </div>
+
+    <div style="flex:1;overflow-y:auto;padding:20px 18px 16px;">
+      <div style="font-size:14.5px;font-weight:600;margin-bottom:3px;">商品を検索してください</div>
+      <div style="font-size:12px;color:var(--ink-faint);margin-bottom:14px;">型番・商品名で検索できます</div>
+
+      <div style="display:flex;align-items:center;gap:9px;background:var(--surface-2);border:1px solid var(--line);border-radius:12px;padding:10px 13px;margin-bottom:16px;">
+        <svg width="16" height="16" viewBox="0 0 20 20" fill="none" stroke="#8399a4" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" style="flex:none;"><circle cx="8.7" cy="8.7" r="5.7"></circle><path d="m17 17-4.3-4.3"></path></svg>
+        <input id="item-search" type="text" placeholder="型番・商品名で検索（例：110001、Tシャツ）" style="border:none;background:none;outline:none;font-size:12.5px;width:100%;color:var(--ink);" onkeydown="if(event.key==='Enter'){event.preventDefault();searchItems();}">
+        <button onclick="searchItems()" style="flex:none;background:var(--accent);color:#fff;border:none;border-radius:8px;padding:7px 13px;font-size:12px;cursor:pointer;">検索</button>
+      </div>
+
+      <div id="item-list" style="display:flex;flex-direction:column;gap:9px;"></div>
+      <div id="item-empty-note" style="font-size:11.5px;color:var(--ink-faint);margin-top:12px;text-align:center;">型番や商品名を入力して検索してください</div>
+
+      <div id="color-section" hidden>
+        <div style="height:1px;background:var(--line);margin:22px 0 16px;"></div>
+        <div style="font-size:14.5px;font-weight:600;margin-bottom:12px;">カラーを選んでください</div>
+        <div id="color-list" style="display:flex;flex-wrap:wrap;gap:8px;"></div>
+      </div>
+
+      <div id="size-section" hidden>
+        <div style="height:1px;background:var(--line);margin:22px 0 16px;"></div>
+        <div style="font-size:14.5px;font-weight:600;margin-bottom:3px;">サイズ・数量</div>
+        <div id="fabric-selected-name" style="font-size:12px;color:var(--ink-faint);margin-bottom:12px;"></div>
+        <div id="size-rows" style="display:flex;flex-direction:column;gap:6px;"></div>
+        <button class="btn-outline" style="width:100%;height:44px;font-size:13px;margin-top:14px;border:1.5px solid var(--accent);color:var(--accent);background:var(--surface);border-radius:9px;cursor:pointer;" onclick="addToCart()">＋ カートに追加</button>
+      </div>
+
+      <div id="cart-section" hidden>
+        <div style="height:1px;background:var(--line);margin:22px 0 16px;"></div>
+        <div style="font-size:14.5px;font-weight:600;margin-bottom:12px;">カート内の商品</div>
+        <div id="cart-list" style="display:flex;flex-direction:column;gap:8px;"></div>
+      </div>
+    </div>
+
+    <div style="background:var(--surface);border-top:1px solid var(--line);padding:12px 18px 18px;display:flex;align-items:center;gap:14px;">
+      <div>
+        <div style="font-size:11px;color:var(--ink-faint);">カート合計</div>
+        <div class="mono num" id="qty-total" style="font-size:16px;font-weight:600;">–</div>
+      </div>
+      <button class="btn-primary" style="flex:1;height:46px;font-size:14px;" onclick="proceedToDesign()">次へ：デザイン</button>
+    </div>
+  </div>
+
+  <div id="order-step-2" class="screen" hidden>
+    <div style="padding:18px 18px 0;">
+      <div style="display:flex;align-items:center;justify-content:space-between;">
+        <button class="navicon" style="background:var(--surface-2);" onclick="goToStep(1)">
+          <svg width="17" height="17" viewBox="0 0 20 20" fill="none" stroke="#152430" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12.5 4 6.5 10l6 6"></path></svg>
+        </button>
+        <div style="font-family:'Shippori Mincho',serif;font-weight:700;font-size:15px;">ご注文</div>
+        <div style="width:34px;"></div>
+      </div>
+      <div style="display:flex;gap:6px;margin-top:16px;">
+        <div style="flex:1;height:4px;border-radius:2px;background:var(--accent);"></div>
+        <div style="flex:1;height:4px;border-radius:2px;background:var(--accent);"></div>
+        <div style="flex:1;height:4px;border-radius:2px;background:var(--line);"></div>
+      </div>
+    </div>
+
+    <div style="flex:1;overflow-y:auto;padding:22px 18px 16px;">
+      <div style="font-size:14.5px;font-weight:600;margin-bottom:3px;">デザインについて教えてください</div>
+      <div style="font-size:12px;color:var(--ink-faint);margin-bottom:16px;">画像がなくてもご要望だけで結構です</div>
+
+      <input id="design-file-input" type="file" accept="image/*" style="display:none;" onchange="onDesignFileChange(event)">
+      <div id="upload-box" onclick="document.getElementById('design-file-input').click()" style="border:1.5px dashed var(--line-strong);border-radius:14px;padding:22px;text-align:center;cursor:pointer;">
+        <img id="upload-preview" hidden style="max-width:100%;max-height:160px;border-radius:8px;margin-bottom:10px;">
+        <div id="upload-icon" style="width:40px;height:40px;border-radius:10px;background:var(--accent-soft);margin:0 auto 10px;display:flex;align-items:center;justify-content:center;">
+          <svg width="19" height="19" viewBox="0 0 20 20" fill="none" stroke="#0d4a72" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13V4M6 8l4-4 4 4"></path><path d="M4 14v1.5A1.5 1.5 0 0 0 5.5 17h9a1.5 1.5 0 0 0 1.5-1.5V14"></path></svg>
+        </div>
+        <div id="upload-text" style="font-size:13px;color:var(--ink-muted);">タップして画像をアップロード</div>
+      </div>
+
+      <div style="font-size:13px;font-weight:600;margin:20px 0 8px;">ご要望・メモ</div>
+      <textarea id="design-text" rows="4" placeholder="例：胸に小さくロゴ、背中に大きくチーム名を入れたい" style="width:100%;border:1px solid var(--line);border-radius:10px;padding:11px 13px;font-size:13px;resize:none;outline:none;"></textarea>
+    </div>
+
+    <div style="background:var(--surface);border-top:1px solid var(--line);padding:12px 18px 18px;">
+      <button class="btn-primary" style="width:100%;height:46px;font-size:14px;" onclick="goToStep(3)">次へ：ご連絡先</button>
+    </div>
+  </div>
+
+  <div id="order-step-3" class="screen" hidden>
+    <div style="padding:18px 18px 0;">
+      <div style="display:flex;align-items:center;justify-content:space-between;">
+        <button class="navicon" style="background:var(--surface-2);" onclick="goToStep(2)">
+          <svg width="17" height="17" viewBox="0 0 20 20" fill="none" stroke="#152430" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12.5 4 6.5 10l6 6"></path></svg>
+        </button>
+        <div style="font-family:'Shippori Mincho',serif;font-weight:700;font-size:15px;">ご注文</div>
+        <div style="width:34px;"></div>
+      </div>
+      <div style="display:flex;gap:6px;margin-top:16px;">
+        <div style="flex:1;height:4px;border-radius:2px;background:var(--accent);"></div>
+        <div style="flex:1;height:4px;border-radius:2px;background:var(--accent);"></div>
+        <div style="flex:1;height:4px;border-radius:2px;background:var(--accent);"></div>
+      </div>
+    </div>
+
+    <div style="flex:1;overflow-y:auto;padding:22px 18px 16px;">
+      <div style="display:flex;align-items:center;gap:12px;background:var(--surface-2);border:1px solid var(--line);border-radius:12px;padding:12px 14px;margin-bottom:20px;">
+        <img id="liff-avatar" style="width:40px;height:40px;border-radius:50%;flex:none;background:var(--line);">
+        <div>
+          <div style="font-size:11px;color:var(--ink-faint);">LINEアカウント</div>
+          <div id="liff-name" style="font-size:13.5px;font-weight:600;"></div>
+        </div>
+      </div>
+
+      <div style="font-size:12.5px;color:var(--ink-muted);margin-bottom:6px;">電話番号<span style="color:var(--bad);">※必須</span></div>
+      <input id="cust-contact" type="tel" required placeholder="例：090-1234-5678" style="width:100%;border:1px solid var(--line);border-radius:10px;padding:11px 13px;font-size:13.5px;outline:none;margin-bottom:16px;">
+
+      <div style="font-size:12.5px;color:var(--ink-muted);margin-bottom:6px;">納品希望日（任意）</div>
+      <input id="cust-date" type="date" style="width:100%;box-sizing:border-box;display:block;-webkit-appearance:none;appearance:none;border:1px solid var(--line);border-radius:10px;padding:11px 13px;font-size:13.5px;outline:none;color:var(--ink);">
+
+      <div style="background:var(--surface-2);border:1px solid var(--line);border-radius:12px;padding:14px 15px;margin-top:22px;">
+        <div style="font-size:12.5px;font-weight:600;margin-bottom:8px;">ご注文内容</div>
+        <div id="order-summary" style="font-size:12.5px;color:var(--ink-muted);line-height:1.9;"></div>
+      </div>
+    </div>
+
+    <div style="background:var(--surface);border-top:1px solid var(--line);padding:12px 18px 18px;">
+      <button id="submit-btn" class="btn-primary" style="width:100%;height:46px;font-size:14px;" onclick="submitOrder()">この内容で注文する</button>
+    </div>
+  </div>
+
+  <div id="order-complete" class="screen" hidden style="align-items:center;justify-content:center;padding:32px;text-align:center;">
+    <div style="width:56px;height:56px;border-radius:50%;background:var(--good-soft);display:flex;align-items:center;justify-content:center;margin-bottom:18px;">
+      <svg width="26" height="26" viewBox="0 0 20 20" fill="none" stroke="#2f7d5c" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m4 10 4 4 8-9"></path></svg>
+    </div>
+    <div style="font-family:'Shippori Mincho',serif;font-weight:700;font-size:17px;margin-bottom:8px;">ご注文ありがとうございます</div>
+    <div style="font-size:12.5px;color:var(--ink-muted);line-height:1.8;">LINEに確認メッセージをお送りしました。見積り・デザインについては、このトークルームで担当者からご連絡します。</div>
+    <div class="mono" id="complete-order-id" style="margin-top:16px;font-size:12px;color:var(--ink-faint);"></div>
+    <div style="display:flex;flex-direction:column;gap:10px;width:100%;max-width:260px;margin-top:24px;">
+      <button class="btn-primary" style="width:100%;height:44px;font-size:13px;" onclick="closeLiff()">トークに戻る</button>
+    </div>
+  </div>
+
+</div>
+
+<script>
+/* このページはNetlifyで静的ホストし、データの保存・LINE通知はすべてGAS(customerプロジェクト)のdoPost APIを叩いて行う。
+   GAS単体でLIFF SDKをホストするとliff.init()が完了しない既知の相性問題があるため、フォームの表示だけここに切り出した。 */
+const CUSTOMER_API_URL = 'https://script.google.com/macros/s/AKfycbw7KCi8g5YQGN2hwauyF4b3j8FwtwtoEZ1dZb4p5ABHkmRNIU6YpkgZqoJ7mkuVrAi_cQ/exec';
+
+function esc(s){ const d=document.createElement('div'); d.textContent=s; return d.innerHTML; }
+function gsError(err){
+  console.error(err);
+  alert('サーバーとの通信でエラーが発生しました。時間をおいて再度お試しください。\n' + (err && err.message ? err.message : err));
 }
-/* ============ 1注文＝複数商品（色違いのカート注文など）への対応 ============
-   admin側と同じ仕組み。カート注文（色違いをまとめて注文）は1つのOrderIDのまま、内訳を
-   OrderItemsシートに1行ずつ記録する（無ければOrdersシート自身から単一商品として組み立てる）。 */
-function orderItemsSheet_() {
-  const ss = ss_();
-  let sh = ss.getSheetByName(SHEETS.ORDER_ITEMS);
-  if (!sh) { sh = ss.insertSheet(SHEETS.ORDER_ITEMS); sh.appendRow(['OrderID', 'ItemCode', 'ItemName', 'ColorCode', 'ColorName', 'SizesJson']); }
-  return sh;
-}
-function getOrderItems_(orderId, r) {
-  const rows = rowsToObjects_(orderItemsSheet_()).filter(function (x) { return String(x.OrderID) === String(orderId); });
-  if (rows.length) {
-    return rows.map(function (x) {
-      let sizes = {};
-      try { sizes = JSON.parse(x.SizesJson || '{}'); } catch (e) { /* ignore */ }
-      return { itemCode: String(x.ItemCode || ''), itemName: x.ItemName || '', colorCode: String(x.ColorCode || ''), colorName: x.ColorName || '', sizes: sizes };
-    });
-  }
-  return [{ itemCode: r.FabricId, itemName: r.FabricName, colorCode: r.ColorCode || '', colorName: r.ColorName || '', sizes: parseSizes_(r) }];
+function sizeLines(sizes, opts){
+  opts = opts || {};
+  const rows = Object.keys(sizes).filter(s=>sizes[s]>0).map(s=>
+    `<div style="display:flex;justify-content:space-between;align-items:center;padding:${opts.pad||'4px 0'};${opts.divider?'border-bottom:1px solid var(--line);':''}">
+      <span style="font-size:${opts.size||'13px'};">${esc(s)}</span>
+      <span class="mono" style="font-size:${opts.size||'13px'};color:${opts.muted?'var(--ink-muted)':'var(--ink)'};">${sizes[s]}枚</span>
+    </div>`
+  ).join('');
+  return rows || `<div style="font-size:${opts.size||'13px'};color:var(--ink-faint);">サイズ未選択</div>`;
 }
 
-/* LIFF ID は Liff.html 内に直接埋め込んでいます（LIFF IDは秘密情報ではなく、
-   LINE Developersコンソールに登録したエンドポイントURLからのみ有効なため）。 */
+let orderForm = { itemCode:null, itemName:'', price:null, colorCode:null, colorName:'', sizes:{}, designImage:null, step:1 };
+let cart = [];
+let lineProfile = null;
+let itemSearchResults = [];
+let colorOptions = [];
+let productStock = [];
 
-/* ============ Web アプリのエントリーポイント ============ */
-function doGet(e) {
-  const mode = e && e.parameter && e.parameter.mode;
-  if (mode === 'itemIndex') return jsonOut_(getProductItemIndex_());
-  if (mode === 'reindexProducts') { clearProductItemIndexCache_(); return jsonOut_({ ok: true, message: '商品検索のキャッシュをクリアしました。' }); }
-  if (mode === 'productSearch') return jsonOut_(searchProductsPublic_(e.parameter.q));
-  if (mode === 'productColors') return jsonOut_(getProductColors_(e.parameter.code));
-  if (mode === 'productStock') return jsonOut_(getProductStock_(e.parameter.code, e.parameter.color));
-  if (mode === 'orderStatus') return jsonOut_(getOrderStatusForLine_(e.parameter.lineUserId));
-  if (mode === 'orderFormData') return jsonOut_(getOrderFormData_(e.parameter.formId));
-  if (mode === 'orderform') {
-    const t = HtmlService.createTemplateFromFile('OrderForm');
-    t.formId = e.parameter.formId || '';
-    t.scriptUrl = ScriptApp.getService().getUrl();
-    return t.evaluate()
-      .setTitle('MarineBlue ご注文')
-      .addMetaTag('viewport', 'width=device-width, initial-scale=1');
-  }
-  const file = mode === 'liff' ? 'Liff' : mode === 'lifftest' ? 'LiffTest' : 'Customer';
-  return HtmlService.createHtmlOutputFromFile(file)
-    .setTitle('MarineBlue ご注文')
-    .addMetaTag('viewport', 'width=device-width, initial-scale=1')
-    .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL);
+/* 商品コード・商品名・価格だけの一覧を起動時に1回だけ取得し、以降の検索は端末内でフィルタする。
+   カタログが増えて数千点規模になっても、検索のたびにサーバーへ問い合わせない。 */
+let productIndex = [];
+let productIndexLoaded = false;
+function loadProductIndex(){
+  fetch(CUSTOMER_API_URL + '?mode=itemIndex')
+    .then(function(res){ return res.json(); })
+    .then(function(data){
+      productIndex = (data || []).map(function(it){ return { itemCode:String(it.itemCode), itemName:String(it.itemName||''), price: it.price, modelNo:String(it.modelNo||''), sizeName:String(it.sizeName||'') }; });
+      productIndexLoaded = true;
+      if(document.getElementById('item-search').value.trim()) searchItems();
+    })
+    .catch(function(err){ console.error('商品データの取得に失敗: ', err); });
 }
+loadProductIndex();
 
-/* ============ 注文フォーム（既存のお客様向け。Misocaの専用フォームを置き換える） ============
-   admin側で発行したフォーム（型番・カラー・単価）を、サイズ・在庫は常に最新の状態で表示する。 */
-/** 敬称が付いていなければ「様」を自動で付ける（管理画面の入力の手間・付け忘れをなくすため） */
-function withHonorific_(name) {
-  name = String(name || '').trim();
-  if (!name) return name;
-  if (/[様殿]$|御中$/.test(name)) return name;
-  return name + ' 様';
+const ORDER_SCREEN_IDS = {step1:'order-step-1',step2:'order-step-2',step3:'order-step-3',complete:'order-complete'};
+function showOrderScreen(name){
+  Object.entries(ORDER_SCREEN_IDS).forEach(([k,id])=>{ document.getElementById(id).hidden = k!==name; });
+  window.scrollTo(0,0);
 }
-function getOrderFormData_(formId) {
-  if (!formId) return null;
-  const forms = rowsToObjects_(sheet_('OrderForms'));
-  const form = forms.find(function (f) { return String(f.FormId) === String(formId); });
-  if (!form) return null;
-  const itemRows = rowsToObjects_(sheet_('OrderFormItems')).filter(function (r) { return String(r.FormId) === String(formId); });
-  const items = itemRows.map(function (r) {
-    return {
-      itemCode: String(r.ItemCode),
-      itemName: r.ItemName,
-      colorCode: String(r.ColorCode),
-      colorName: r.ColorName,
-      unitPrice: (r.UnitPrice === '' || r.UnitPrice === null || r.UnitPrice === undefined) ? null : Number(r.UnitPrice),
-      sizes: getProductStock_(r.ItemCode, r.ColorCode)
-    };
+function goToStep(n){
+  orderForm.step = n;
+  showOrderScreen('step'+n);
+  if(n===3) renderSummary();
+}
+function currentSelectionTotal(){
+  return Object.values(orderForm.sizes).reduce((a,b)=>a+b,0);
+}
+function addToCart(){
+  if(!orderForm.itemCode || !orderForm.colorCode){ alert('商品とカラーを選択してください。'); return; }
+  if(currentSelectionTotal()<=0){ alert('サイズを選択し、数量を1枚以上入力してください。'); return; }
+  cart.push({
+    itemCode: orderForm.itemCode, itemName: orderForm.itemName,
+    colorCode: orderForm.colorCode, colorName: orderForm.colorName,
+    sizes: Object.assign({}, orderForm.sizes)
   });
-  return { formId: formId, customerName: withHonorific_(form.CustomerName), items: items };
+  resetItemSelection_();
+  document.getElementById('item-search').value = '';
+  document.getElementById('item-list').innerHTML = '';
+  const note = document.getElementById('item-empty-note');
+  note.textContent = '型番や商品名を入力して検索してください';
+  note.style.display = 'block';
+  renderCart();
 }
-/** ヘッダーが無い環境（EstimateUnitPrice未追加など）でも落ちないよう、あれば書き込むだけにする */
-function trySetOrderField_(sh, row, headerName, value) {
-  const headers = sh.getRange(1, 1, 1, sh.getLastColumn()).getValues()[0];
-  const idx = headers.indexOf(headerName);
-  if (idx < 0) return;
-  sh.getRange(row, idx + 1).setValue(value);
+function removeFromCart(idx){
+  cart.splice(idx,1);
+  renderCart();
 }
-/** 注文フォームからの送信。フォームに含まれる商品ごとに1件ずつOrdersへ登録する（数量0の商品はスキップ） */
-function createOrderFromOrderForm(payload) {
-  const lock = LockService.getScriptLock();
-  lock.waitLock(30000);
-  try {
-    const sh = sheet_(SHEETS.ORDERS);
-    const now = nowStamp_();
-    const customerName = withHonorific_(payload.customerName || 'お客様');
-    const contact = payload.contact || '';
-    const newIds = [];
-    ensureContactTextFormat_(sh);
-    (payload.items || []).forEach(function (item) {
-      const sizes = item.sizes || {};
-      const total = Object.keys(sizes).reduce(function (a, s) { return a + (Number(sizes[s]) || 0); }, 0);
-      if (!total) return;
-      const newId = nextOrderId_(sh);
-      sh.appendRow(buildOrderRow_(newId, customerName, contact, {
-        fabricId: item.itemCode, fabricName: item.itemName, colorCode: item.colorCode, colorName: item.colorName, desiredDate: payload.desiredDate
-      }, sizes, now, ''));
-      const row = sh.getLastRow();
-      /* サイズごとに単価が異なる場合はunitPriceが空になるので、その場合はestimateAmount
-         （画面側でサイズごとの単価×数量を合計した金額）をそのまま見積り合計として使う */
-      if (item.unitPrice) trySetOrderField_(sh, row, 'EstimateUnitPrice', item.unitPrice);
-      if (item.estimateAmount) trySetOrderField_(sh, row, 'Estimate', item.estimateAmount);
-      trySetOrderField_(sh, row, 'OrderSource', 'form');
-      adjustProductStock_(item.itemCode, item.colorCode, sizes, newId);
-      newIds.push(newId);
-    });
-    if (!newIds.length) throw new Error('数量が入力されていません。');
-    sendAdminNotifyEmail_(newIds.join('、'), {
-      customer: customerName, contact: contact, fabricId: '(注文フォーム)', fabricName: newIds.length + '件の商品', sizes: {}, desiredDate: payload.desiredDate
-    });
-    return { orderIds: newIds };
-  } finally {
-    lock.releaseLock();
+function cartTotalQty(){
+  return cart.reduce(function(sum,item){ return sum + Object.values(item.sizes).reduce((a,b)=>a+b,0); },0);
+}
+function renderCart(){
+  document.getElementById('cart-section').hidden = cart.length===0;
+  document.getElementById('cart-list').innerHTML = cart.map(function(item,idx){
+    const total = Object.values(item.sizes).reduce((a,b)=>a+b,0);
+    return `<div style="display:flex;align-items:center;justify-content:space-between;gap:10px;border:1px solid var(--line);border-radius:12px;padding:12px 14px;">
+      <div style="flex:1;min-width:0;">
+        <div style="font-size:13px;font-weight:600;">${esc(item.itemCode)} ${esc(item.itemName)}${item.colorName?' ／ '+esc(item.colorName):''}</div>
+        <div style="margin-top:4px;">${sizeLines(item.sizes,{size:'11.5px',muted:true,pad:'1px 0'})}</div>
+      </div>
+      <div style="display:flex;align-items:center;gap:10px;flex:none;">
+        <span class="mono num" style="font-size:12.5px;">計${total}枚</span>
+        <button onclick="removeFromCart(${idx})" style="border:none;background:none;color:var(--bad);font-size:11.5px;cursor:pointer;">削除</button>
+      </div>
+    </div>`;
+  }).join('');
+  updateTotal();
+}
+function proceedToDesign(){
+  if(orderForm.itemCode && orderForm.colorCode && currentSelectionTotal()>0){
+    addToCart();
   }
+  if(cart.length===0){ alert('商品を選択して、カートに追加してください。'); return; }
+  goToStep(2);
 }
 
-/* ============ 商品検索の高速化（カタログが数千点規模でも検索のたびに全行を
-   読み込まないよう、商品コード・商品名・価格だけの軽い一覧をキャッシュする） ============ */
-const PRODUCT_INDEX_CHUNK_SIZE = 300;
-const PRODUCT_INDEX_CACHE_PREFIX = 'productIndexChunk_v1_';
-const PRODUCT_INDEX_META_KEY = 'productIndexMeta_v1';
-const PRODUCT_INDEX_CACHE_TTL_SEC = 1800; // 30分。カタログ追加後は最大30分で自動的に反映される
-
-/** 商品コード・商品名・価格だけの一覧（色・サイズ違いは1商品コードにまとめる）。フォーム側はこれを
-    起動時に1回だけ取得し、以降の検索は端末内で行う（検索のたびにシートへアクセスしない） */
-function getProductItemIndex_() {
-  const cache = CacheService.getScriptCache();
-  const metaRaw = cache.get(PRODUCT_INDEX_META_KEY);
-  if (metaRaw) {
-    try {
-      const meta = JSON.parse(metaRaw);
-      const keys = [];
-      for (let i = 0; i < meta.chunks; i++) keys.push(PRODUCT_INDEX_CACHE_PREFIX + i);
-      const chunkMap = keys.length ? cache.getAll(keys) : {};
-      if (meta.chunks === 0 || Object.keys(chunkMap).length === meta.chunks) {
-        let all = [];
-        for (let i = 0; i < meta.chunks; i++) all = all.concat(JSON.parse(chunkMap[PRODUCT_INDEX_CACHE_PREFIX + i]));
-        return all;
-      }
-    } catch (e) { /* キャッシュが壊れている場合は再構築する */ }
-  }
-  const index = buildProductItemIndex_();
-  cacheProductItemIndex_(index);
-  return index;
+function resetItemSelection_(){
+  orderForm.itemCode=null;
+  orderForm.itemName='';
+  orderForm.colorCode=null;
+  orderForm.colorName='';
+  orderForm.sizes={};
+  colorOptions=[];
+  productStock=[];
+  document.getElementById('color-section').hidden=true;
+  document.getElementById('size-section').hidden=true;
+  updateTotal();
 }
-function buildProductItemIndex_() {
-  const sh = sheet_(SHEETS.PRODUCTS);
-  const lastRow = sh.getLastRow();
-  if (lastRow < 2) return [];
-  const headers = sh.getRange(1, 1, 1, sh.getLastColumn()).getValues()[0];
-  const iCode = headers.indexOf(PRODUCT_COLS.code), iName = headers.indexOf(PRODUCT_COLS.name),
-    iPrice = headers.indexOf(PRODUCT_COLS.price), iModelNo = headers.indexOf(PRODUCT_COLS.modelNo),
-    iSizeName = headers.indexOf(PRODUCT_COLS.sizeName);
-  const numCols = Math.max(iCode, iName, iPrice, iModelNo, iSizeName) + 1;
-  const values = sh.getRange(2, 1, lastRow - 1, numCols).getValues();
-  const map = {};
-  const order = [];
-  for (let i = 0; i < values.length; i++) {
-    const code = String(values[i][iCode] || '').trim();
-    if (!code) continue;
-    if (!map[code]) {
-      map[code] = {
-        itemCode: code,
-        itemName: String(values[i][iName] || ''),
-        price: values[i][iPrice],
-        modelNo: iModelNo >= 0 ? String(values[i][iModelNo] || '') : '',
-        sizeSet: {}
-      };
-      order.push(code);
-    }
-    if (iSizeName >= 0) {
-      const sz = String(values[i][iSizeName] || '').trim();
-      if (sz) map[code].sizeSet[sz] = true;
-    }
-  }
-  /* 同じ商品名・同じ型番でも、サイズ帯ごとに商品コードが分かれていることがある
-     （例：型番3510「ラグビーシャツ」が 110/120サイズ用・130/140/150サイズ用・S〜XXL用の
-     3つの商品コードに分かれている）。名前だけでは見分けがつかないため、その商品コードが
-     カバーするサイズ範囲を検索一覧に表示できるようにする。 */
-  return order.map(function (code) {
-    const e = map[code];
-    const sizeNames = Object.keys(e.sizeSet).sort(function (a, b) { return sizeSortRank_(a) - sizeSortRank_(b); });
-    let sizeLabel = '';
-    if (sizeNames.length === 1) {
-      sizeLabel = sizeNames[0];
-    } else if (sizeNames.length >= 2 && sizeNames.length <= 4) {
-      sizeLabel = sizeNames.join('・');
-    } else if (sizeNames.length > 4) {
-      sizeLabel = sizeNames[0] + '〜' + sizeNames[sizeNames.length - 1];
-    }
-    return {
-      itemCode: e.itemCode,
-      itemName: e.itemName,
-      price: e.price,
-      modelNo: e.modelNo,
-      sizeName: sizeLabel
-    };
-  });
-}
-function cacheProductItemIndex_(index) {
-  const cache = CacheService.getScriptCache();
-  const chunkCount = Math.ceil(index.length / PRODUCT_INDEX_CHUNK_SIZE) || 0;
-  try {
-    if (chunkCount) {
-      const payload = {};
-      for (let i = 0; i < chunkCount; i++) {
-        payload[PRODUCT_INDEX_CACHE_PREFIX + i] = JSON.stringify(index.slice(i * PRODUCT_INDEX_CHUNK_SIZE, (i + 1) * PRODUCT_INDEX_CHUNK_SIZE));
-      }
-      cache.putAll(payload, PRODUCT_INDEX_CACHE_TTL_SEC);
-    }
-    cache.put(PRODUCT_INDEX_META_KEY, JSON.stringify({ chunks: chunkCount }), PRODUCT_INDEX_CACHE_TTL_SEC);
-  } catch (e) {
-    console.error('商品インデックスのキャッシュに失敗しました: ' + e);
-  }
-}
-/** カタログを入れ替えた直後など、最大30分のキャッシュを待たずに検索へ反映させたいときに呼ぶ */
-function clearProductItemIndexCache_() {
-  const cache = CacheService.getScriptCache();
-  const metaRaw = cache.get(PRODUCT_INDEX_META_KEY);
-  const keys = [PRODUCT_INDEX_META_KEY];
-  if (metaRaw) {
-    try {
-      const meta = JSON.parse(metaRaw);
-      for (let i = 0; i < meta.chunks; i++) keys.push(PRODUCT_INDEX_CACHE_PREFIX + i);
-    } catch (e) { /* ignore */ }
-  }
-  cache.removeAll(keys);
-}
-/** サイズを小さい順に並べるための順位づけ。90/100/...のような数値サイズはそのまま数値の大小、
-   S/M/L/LLなどの文字サイズは下記表で判定する（表にない未知の表記は末尾にアルファベット順で並ぶ）。
-   小さい配列（1商品あたり数サイズ）にしか使わないので、検索速度への影響はない。 */
-var SIZE_RANK_MAP_ = {
-  'XXS': 1, '2XS': 1, 'XS': 2, 'SS': 2, 'S': 3, 'M': 4, 'L': 5,
-  'LL': 6, 'XL': 6, '2L': 6, '3L': 7, 'XXL': 7, '2XL': 7,
-  '4L': 8, '3XL': 8, '5L': 9, '4XL': 9, '6L': 10, '5XL': 10,
-  '7L': 11, '6XL': 11, '8L': 12, '9L': 13,
-  'F': 100, 'FREE': 100, 'フリー': 100, 'ワンサイズ': 100, 'ONE': 100
-};
-function sizeSortRank_(sizeName) {
-  const raw = String(sizeName == null ? '' : sizeName).trim();
-  if (!raw) return 99999;
-  if (/^\d+(\.\d+)?$/.test(raw)) return Number(raw);
-  const upper = raw.toUpperCase();
-  if (SIZE_RANK_MAP_.hasOwnProperty(upper)) return 500 + SIZE_RANK_MAP_[upper];
-  return 9000 + upper.charCodeAt(0);
-}
-/** 旧バージョン互換用（サーバー側で絞り込みたい場合に使用。フォーム本体は itemIndex を直接使う） */
-function searchProductsPublic_(query) {
-  const q = String(query || '').trim().toLowerCase();
-  if (!q) return [];
-  const qDigits = q.replace(/\D/g, '');
-  const index = getProductItemIndex_();
-  const results = [];
-  for (let i = 0; i < index.length && results.length < 50; i++) {
-    const it = index[i];
-    const modelNo = String(it.modelNo || '').toLowerCase();
-    const hit = it.itemCode.toLowerCase().indexOf(q) >= 0 || it.itemName.toLowerCase().indexOf(q) >= 0 || modelNo.indexOf(q) >= 0
-      || (qDigits && modelNo.replace(/\D/g, '').indexOf(qDigits) >= 0);
-    if (!hit) continue;
-    results.push(it);
-  }
-  return results;
-}
-/** TextFinderで見つかった行(商品コード列に一致するものだけ)の最小行〜最大行をまとめて1回で読み込む。
-    行ごとに個別読み込みするとバリエーション数だけAPI呼び出しが発生し遅くなるため。
-    検索範囲は商品コード列だけに絞る（シート全体を対象にすると2万行超×全列＝数十万セルを
-    毎回スキャンすることになり、型番選択のたびに応答が遅くなっていたため）。 */
-function readMatchedBlock_(sh, itemCode, iCode, lastCol) {
-  const lastRow = sh.getLastRow();
-  if (lastRow < 2) return null;
-  const codeRange = sh.getRange(2, iCode + 1, lastRow - 1, 1);
-  const ranges = codeRange.createTextFinder(String(itemCode)).matchEntireCell(true).matchCase(false).findAll();
-  if (!ranges.length) return null;
-  const rowNums = ranges.map(function (rg) { return rg.getRow(); });
-  const minRow = Math.min.apply(null, rowNums), maxRow = Math.max.apply(null, rowNums);
-  return { minRow: minRow, values: sh.getRange(minRow, 1, maxRow - minRow + 1, lastCol).getValues() };
-}
-/** ある商品の色一覧。TextFinderで商品コードが一致する行だけを探すので、カタログが増えても全行走査しない */
-function getProductColors_(itemCode) {
-  const sh = sheet_(SHEETS.PRODUCTS);
-  const lastCol = sh.getLastColumn();
-  const headers = sh.getRange(1, 1, 1, lastCol).getValues()[0];
-  const iCode = headers.indexOf(PRODUCT_COLS.code), iColor = headers.indexOf(PRODUCT_COLS.colorCode), iColorName = headers.indexOf(PRODUCT_COLS.colorName);
-  const block = readMatchedBlock_(sh, itemCode, iCode, lastCol);
-  if (!block) return [];
-  const seen = {};
-  const colors = [];
-  block.values.forEach(function (rowValues) {
-    if (String(rowValues[iCode]) !== String(itemCode)) return;
-    const cc = String(rowValues[iColor]);
-    if (seen[cc]) return;
-    seen[cc] = true;
-    colors.push({ colorCode: cc, colorName: rowValues[iColorName] });
-  });
-  return colors;
-}
-/** ある商品×色のサイズ別在庫。こちらもTextFinderで対象行だけを絞り込み、まとめて1回で読み込む */
-function getProductStock_(itemCode, colorCode) {
-  const sh = sheet_(SHEETS.PRODUCTS);
-  const lastCol = sh.getLastColumn();
-  const headers = sh.getRange(1, 1, 1, lastCol).getValues()[0];
-  const iCode = headers.indexOf(PRODUCT_COLS.code), iColor = headers.indexOf(PRODUCT_COLS.colorCode),
-    iSizeCode = headers.indexOf(PRODUCT_COLS.sizeCode), iSizeName = headers.indexOf(PRODUCT_COLS.sizeName), iQty = headers.indexOf(PRODUCT_COLS.qty),
-    iPrice = headers.indexOf(PRODUCT_COLS.price);
-  const block = readMatchedBlock_(sh, itemCode, iCode, lastCol);
-  if (!block) return [];
-  const rows = [];
-  block.values.forEach(function (rowValues) {
-    if (String(rowValues[iCode]) !== String(itemCode) || String(rowValues[iColor]) !== String(colorCode)) return;
-    const priceVal = rowValues[iPrice];
-    rows.push({
-      sizeCode: String(rowValues[iSizeCode]), size: rowValues[iSizeName], qty: Number(rowValues[iQty]) || 0,
-      price: (priceVal === '' || priceVal === null || priceVal === undefined) ? null : Number(priceVal)
-    });
-  });
-  return rows.sort(function (a, b) { return sizeSortRank_(a.size) - sizeSortRank_(b.size); });
-}
-
-/* ============ 発注リスト（受注に対して在庫が足りない分を自動登録） ============
-   在庫数は0未満にはしない。受注を受け付けた時点で足りない数量だけを「不足」として
-   Backordersシートに自動登録し、運営者が発注管理画面で確認・発注確定できるようにする。 */
-function ensureBackorderColumns_(sh) {
-  const headers = sh.getRange(1, 1, 1, sh.getLastColumn()).getValues()[0];
-  const toAdd = ['Qty', 'OrderRefs'].filter(function (h) { return headers.indexOf(h) < 0; });
-  if (toAdd.length) sh.getRange(1, sh.getLastColumn() + 1, 1, toAdd.length).setValues([toAdd]);
-}
-function recordShortfall_(itemCode, colorCode, colorName, itemName, sizeCode, sizeName, shortfallQty, orderId) {
-  const sh = sheet_(SHEETS.BACKORDERS);
-  ensureBackorderColumns_(sh);
-  const headers = sh.getRange(1, 1, 1, sh.getLastColumn()).getValues()[0];
-  const iLabel = headers.indexOf('Label'), iNote = headers.indexOf('Note'), iPlaced = headers.indexOf('Placed'),
-    iPlacedDate = headers.indexOf('PlacedDate'), iQty = headers.indexOf('Qty'), iRefs = headers.indexOf('OrderRefs');
-  const id = 'BO-' + itemCode + '-' + colorCode + '-' + sizeCode;
-  const label = itemCode + ' ' + itemName + (colorName ? '／' + colorName : '') + '／' + sizeName;
-  const row = findRowByFirstCol_(sh, id);
-  if (row > 0) {
-    const rowVals = sh.getRange(row, 1, 1, headers.length).getValues()[0];
-    const alreadyPlaced = bool_(rowVals[iPlaced]);
-    let qty = alreadyPlaced ? 0 : (Number(rowVals[iQty]) || 0);
-    let refs = alreadyPlaced ? [] : String(rowVals[iRefs] || '').split(',').map(function (s) { return s.trim(); }).filter(Boolean);
-    qty += shortfallQty;
-    if (orderId && refs.indexOf(orderId) < 0) refs.push(orderId);
-    sh.getRange(row, iLabel + 1).setValue(label);
-    sh.getRange(row, iNote + 1).setValue('不足 ' + qty + '枚' + (refs.length ? '・#' + refs.join('、#') : ''));
-    sh.getRange(row, iPlaced + 1).setValue(false);
-    sh.getRange(row, iPlacedDate + 1).setValue('');
-    sh.getRange(row, iQty + 1).setValue(qty);
-    sh.getRange(row, iRefs + 1).setValue(refs.join(','));
-  } else {
-    const refs = orderId ? [orderId] : [];
-    const newRow = new Array(headers.length).fill('');
-    newRow[0] = id;
-    newRow[iLabel] = label;
-    newRow[iNote] = '不足 ' + shortfallQty + '枚' + (refs.length ? '・#' + refs.join('、#') : '');
-    newRow[iPlaced] = false;
-    newRow[iPlacedDate] = '';
-    newRow[iQty] = shortfallQty;
-    newRow[iRefs] = refs.join(',');
-    sh.appendRow(newRow);
-  }
-}
-/** 注文が入った分だけ在庫を差し引く。在庫は0未満にはせず、足りない分は発注リストに自動登録する。
-    サイズ名は商品によって様々（XS〜XXLに限らずF・キッズサイズ等もある）なので、実際に注文された
-    キーだけを対象にする。TextFinderで該当行だけ探すので、6000行超のシートでも全件読み込みしない。 */
-function adjustProductStock_(itemCode, colorCode, sizes, orderId) {
-  const sh = sheet_(SHEETS.PRODUCTS);
-  const lastCol = sh.getLastColumn();
-  const headers = sh.getRange(1, 1, 1, lastCol).getValues()[0];
-  const iCode = headers.indexOf(PRODUCT_COLS.code), iColor = headers.indexOf(PRODUCT_COLS.colorCode),
-    iColorName = headers.indexOf(PRODUCT_COLS.colorName), iSizeCode = headers.indexOf(PRODUCT_COLS.sizeCode),
-    iSizeName = headers.indexOf(PRODUCT_COLS.sizeName), iQty = headers.indexOf(PRODUCT_COLS.qty),
-    iName = headers.indexOf(PRODUCT_COLS.name);
-  const block = readMatchedBlock_(sh, itemCode, iCode, lastCol);
-  if (!block) return;
-  Object.keys(sizes || {}).forEach(function (size) {
-    const amount = Number(sizes[size]) || 0;
-    if (!amount) return;
-    for (let i = 0; i < block.values.length; i++) {
-      const rowValues = block.values[i];
-      if (String(rowValues[iCode]) === String(itemCode) && String(rowValues[iColor]) === String(colorCode) && rowValues[iSizeName] === size) {
-        const cur = Number(rowValues[iQty]) || 0;
-        const newQty = Math.max(0, cur - amount);
-        const shortfall = Math.max(0, amount - cur);
-        sh.getRange(block.minRow + i, iQty + 1).setValue(newQty);
-        rowValues[iQty] = newQty;
-        if (shortfall > 0) {
-          recordShortfall_(itemCode, colorCode, rowValues[iColorName], rowValues[iName], String(rowValues[iSizeCode]), size, shortfall, orderId);
-        }
-        return;
-      }
-    }
-  });
-}
-
-/* ============ LINE Webhook（お客様からのLINEメッセージを受信） ============ */
-/**
- * 注意: Google Apps ScriptのdoPost(e)ではリクエストヘッダーを取得できないため、
- * LINEの署名（X-Line-Signature）検証は行っていません。WebhookのURLは推測困難な
- * 長いURLですが、外部から直接POSTされるリスクはゼロではない前提でご利用ください。
- */
-function doPost(e) {
-  let body = {};
-  try { body = JSON.parse(e.postData.contents); } catch (err) { body = {}; }
-
-  /* Netlifyでホストしている外部LIFF注文フォームからの、注文作成APIリクエスト */
-  if (body && body.apiAction === 'createOrderFromLiff') {
-    try {
-      const result = createOrderFromLiff(body.payload || {});
-      return jsonOut_({ ok: true, order: result });
-    } catch (err) {
-      console.error('createOrderFromLiff APIエラー: ' + err);
-      return jsonOut_({ ok: false, error: String(err && err.message ? err.message : err) });
-    }
-  }
-
-  /* Netlifyでホストしている外部LIFF注文フォームのカートからの、複数商品まとめての注文作成APIリクエスト */
-  if (body && body.apiAction === 'createOrdersFromLiffCart') {
-    try {
-      const result = createOrdersFromLiffCart(body.payload || {});
-      return jsonOut_({ ok: true, result: result });
-    } catch (err) {
-      console.error('createOrdersFromLiffCart APIエラー: ' + err);
-      return jsonOut_({ ok: false, error: String(err && err.message ? err.message : err) });
-    }
-  }
-
-  /* 既存のお客様向け注文フォーム（Misocaの専用フォームの代替）からの送信 */
-  if (body && body.apiAction === 'createOrderFromOrderForm') {
-    try {
-      const result = createOrderFromOrderForm(body.payload || {});
-      return jsonOut_({ ok: true, result: result });
-    } catch (err) {
-      console.error('createOrderFromOrderForm APIエラー: ' + err);
-      return jsonOut_({ ok: false, error: String(err && err.message ? err.message : err) });
-    }
-  }
-
-  /* それ以外はLINEのWebhook（お客様からのメッセージ受信）として扱う */
-  try {
-    const events = body.events || [];
-    events.forEach(function (ev) {
-      if (ev.type === 'message' && ev.message && ev.message.type === 'text') {
-        handleLineTextMessage_(ev);
-      }
-    });
-  } catch (err) {
-    console.error('doPost処理でエラー: ' + err);
-  }
-  return jsonOut_({ status: 'ok' });
-}
-function jsonOut_(obj) {
-  return ContentService.createTextOutput(JSON.stringify(obj)).setMimeType(ContentService.MimeType.JSON);
-}
-
-function handleLineTextMessage_(ev) {
-  const userId = ev.source && ev.source.userId;
-  const text = ev.message.text;
-  if (!userId) return;
-
-  const order = findLatestOrderByLineUserId_(userId);
-  if (!order) {
-    // 該当する注文が見つからない場合は、注文フォームの利用を案内する
-    replyLineMessage_(ev.replyToken, 'メッセージありがとうございます。ご注文がまだの場合は、トーク画面のメニューからご注文フォームをご利用ください。');
+function searchItems(){
+  const qRaw = document.getElementById('item-search').value.trim();
+  const q = qRaw.toLowerCase();
+  const note = document.getElementById('item-empty-note');
+  /* 検索するたびに、前回選択していたカラー・サイズを引きずらないようにリセットする */
+  resetItemSelection_();
+  if(!qRaw){
+    itemSearchResults=[];
+    document.getElementById('item-list').innerHTML='';
+    note.textContent='型番や商品名を入力して検索してください';
+    note.style.display='block';
     return;
   }
-
-  const lock = LockService.getScriptLock();
-  lock.waitLock(30000);
-  try {
-    const time = nowStamp_();
-    sheet_(SHEETS.MESSAGES).appendRow([order.OrderID, 'customer', text, time, '']);
-    const ordSheet = sheet_(SHEETS.ORDERS);
-    const row = findRowByFirstCol_(ordSheet, order.OrderID);
-    if (row > 0) {
-      touchUpdated_(ordSheet, row);
-      const c = colIndex_(ordSheet, 'Unread');
-      const cur = Number(ordSheet.getRange(row, c).getValue()) || 0;
-      ordSheet.getRange(row, c).setValue(cur + 1);
-    }
-  } finally {
-    lock.releaseLock();
+  if(!productIndexLoaded){
+    document.getElementById('item-list').innerHTML='';
+    note.textContent='商品データを読み込み中です…';
+    note.style.display='block';
+    return;
   }
+  const qDigits = q.replace(/\D/g,'');
+  itemSearchResults = productIndex.filter(function(it){
+    const modelNo = it.modelNo.toLowerCase();
+    return it.itemCode.toLowerCase().indexOf(q)>=0 || it.itemName.toLowerCase().indexOf(q)>=0 || modelNo.indexOf(q)>=0
+      || (qDigits && modelNo.replace(/\D/g,'').indexOf(qDigits)>=0);
+  }).slice(0,50);
+  renderItemList();
+  note.style.display = itemSearchResults.length ? 'none' : 'block';
+  note.textContent = '一致する商品が見つかりませんでした';
+}
+function renderItemList(){
+  document.getElementById('item-list').innerHTML = itemSearchResults.map(f=>`
+    <div class="fabric-card ${f.itemCode===orderForm.itemCode?'selected':''}" onclick="selectItem('${f.itemCode}')">
+      <div style="flex:1;min-width:0;">
+        <div style="display:flex;align-items:center;gap:6px;"><span class="mono" style="font-size:11px;color:${f.itemCode===orderForm.itemCode?'var(--accent)':'var(--ink-faint)'};">${esc(f.itemCode)}</span><span style="font-size:13.5px;font-weight:600;">${esc(f.itemName)}${f.sizeName?'（'+esc(f.sizeName)+'）':''}</span></div>
+      </div>
+      <div class="radio">${f.itemCode===orderForm.itemCode?'<svg width="12" height="12" viewBox="0 0 20 20" fill="none" stroke="#fff" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m4 10 4 4 8-9"></path></svg>':''}</div>
+    </div>`).join('');
+}
+function selectItem(code){
+  const item = itemSearchResults.find(x=>x.itemCode===code);
+  if(!item) return;
+  orderForm.itemCode = code;
+  orderForm.itemName = item.itemName;
+  orderForm.price = item.price;
+  orderForm.colorCode = null;
+  orderForm.colorName = '';
+  orderForm.sizes = {};
+  renderItemList();
+  document.getElementById('size-section').hidden = true;
+  fetch(CUSTOMER_API_URL + '?mode=productColors&code=' + encodeURIComponent(code))
+    .then(function(res){ return res.json(); })
+    .then(function(colors){
+      colorOptions = colors || [];
+      renderColorList();
+      document.getElementById('color-section').hidden = false;
+      if(colorOptions.length===1){ selectColor(colorOptions[0].colorCode); }
+    })
+    .catch(function(err){ console.error('カラー取得に失敗: ', err); });
+}
+function renderColorList(){
+  document.getElementById('color-list').innerHTML = colorOptions.map(c=>`
+    <button onclick="selectColor('${c.colorCode}')" style="padding:9px 14px;border-radius:999px;font-size:12.5px;cursor:pointer;border:1.5px solid ${c.colorCode===orderForm.colorCode?'var(--accent)':'var(--line-strong)'};background:${c.colorCode===orderForm.colorCode?'var(--accent-soft)':'var(--surface)'};color:${c.colorCode===orderForm.colorCode?'var(--accent)':'var(--ink)'};">${esc(c.colorName)}</button>`).join('');
+}
+function selectColor(colorCode){
+  const c = colorOptions.find(x=>x.colorCode===colorCode);
+  orderForm.colorCode = colorCode;
+  orderForm.colorName = c ? c.colorName : '';
+  orderForm.sizes = {};
+  renderColorList();
+  fetch(CUSTOMER_API_URL + '?mode=productStock&code=' + encodeURIComponent(orderForm.itemCode) + '&color=' + encodeURIComponent(colorCode))
+    .then(function(res){ return res.json(); })
+    .then(function(stock){
+      productStock = stock || [];
+      orderForm.sizes = {};
+      productStock.forEach(function(row){ orderForm.sizes[row.size] = 0; });
+      document.getElementById('size-section').hidden = false;
+      renderSizeRows();
+    })
+    .catch(function(err){ console.error('在庫取得に失敗: ', err); });
+}
+function renderSizeRows(){
+  document.getElementById('fabric-selected-name').textContent = orderForm.itemCode+' '+orderForm.itemName+' ／ '+orderForm.colorName;
+  document.getElementById('size-rows').innerHTML = productStock.map(row=>{
+    const sz = row.size;
+    return `<div style="display:flex;align-items:center;justify-content:space-between;padding:9px 4px;border-bottom:1px solid var(--line);">
+      <div>
+        <span style="font-size:13.5px;">${esc(sz)}</span>
+        <div style="font-size:10.5px;margin-top:2px;">${stockLabel(row)}</div>
+      </div>
+      <div style="display:flex;align-items:center;gap:14px;">
+        <button class="qty-btn" onclick="changeQty('${sz}',-1)">−</button>
+        <span class="mono num" style="font-size:14px;min-width:14px;text-align:center;">${orderForm.sizes[sz]||0}</span>
+        <button class="qty-btn" onclick="changeQty('${sz}',1)">＋</button>
+      </div>
+    </div>`;
+  }).join('') || '<div style="font-size:12px;color:var(--ink-faint);">この商品のサイズ情報が見つかりませんでした</div>';
+  updateTotal();
+}
+function stockLabel(row){
+  if(row.qty<=0) return '<span style="color:var(--bad);">在庫切れ・お取り寄せ</span>';
+  if(row.qty<5) return `<span style="color:var(--thread);">在庫少なめ（残り${row.qty}枚）</span>`;
+  return `<span style="color:var(--ink-faint);">在庫あり（${row.qty}枚）</span>`;
+}
+function changeQty(sz, delta){
+  orderForm.sizes[sz] = Math.max(0, orderForm.sizes[sz]+delta);
+  renderSizeRows();
+}
+function updateTotal(){
+  const total = cartTotalQty();
+  document.getElementById('qty-total').innerHTML = total+`<span style="font-size:12px;color:var(--ink-faint);font-family:'Zen Kaku Gothic New',sans-serif;">枚</span>`;
 }
 
-/** その LINE ユーザーの注文のうち、未納品のものがあれば最新のそれを、無ければ直近の注文を返す */
-function findLatestOrderByLineUserId_(userId) {
-  const rows = rowsToObjects_(sheet_(SHEETS.ORDERS)).filter(function (r) { return r.LineUserId === userId; });
-  if (!rows.length) return null;
-  const open = rows.filter(function (r) { return r.Status !== '納品済み'; });
-  const pool = open.length ? open : rows;
-  return pool[pool.length - 1];
-}
-
-/** LINEの「注文状況を確認する」画面向け。そのLINEユーザーの注文すべてについて、
-    進行状況・注文内容・見積り・デザイン確認状況をまとめて返す（未納品のものを先に、新しい順） */
-function getOrderStatusForLine_(lineUserId) {
-  if (!lineUserId) return [];
-  const rows = rowsToObjects_(sheet_(SHEETS.ORDERS)).filter(function (r) { return r.LineUserId === lineUserId; });
-  const list = rows.map(function (r) {
-    const items = getOrderItems_(r.OrderID, r);
-    const primary = items[0] || { itemCode: '', itemName: '', colorName: '', sizes: {} };
-    return {
-      id: r.OrderID,
-      items: items,
-      fabricId: primary.itemCode,
-      fabricName: primary.itemName,
-      colorName: primary.colorName || '',
-      sizes: primary.sizes,
-      status: r.Status,
-      desiredDate: dateStr_(r.DesiredDate),
-      estimate: (r.Estimate === '' || r.Estimate === null || r.Estimate === undefined) ? null : Number(r.Estimate),
-      estimateConfirmed: bool_(r.EstimateConfirmed),
-      designFile: r.DesignFile || '',
-      designConfirmed: bool_(r.DesignConfirmed),
-      updated: stampStr_(r.Updated)
-    };
-  });
-  list.sort(function (a, b) {
-    const aOpen = a.status !== '納品済み', bOpen = b.status !== '納品済み';
-    if (aOpen !== bOpen) return aOpen ? -1 : 1;
-    return b.id.localeCompare(a.id, undefined, { numeric: true });
-  });
-  return list;
-}
-
-/* ============ LINEメッセージ送信 ============ */
-function pushLineMessage_(userId, text) {
-  if (!userId) return;
-  const token = PropertiesService.getScriptProperties().getProperty('LINE_CHANNEL_ACCESS_TOKEN');
-  if (!token) { console.error('LINE_CHANNEL_ACCESS_TOKEN が未設定です（プロジェクトの設定 → スクリプト プロパティ）'); return; }
-  try {
-    const res = UrlFetchApp.fetch('https://api.line.me/v2/bot/message/push', {
-      method: 'post',
-      contentType: 'application/json',
-      headers: { Authorization: 'Bearer ' + token },
-      payload: JSON.stringify({ to: userId, messages: [{ type: 'text', text: text }] }),
-      muteHttpExceptions: true
-    });
-    if (res.getResponseCode() >= 300) console.error('LINE push失敗: ' + res.getResponseCode() + ' ' + res.getContentText());
-  } catch (err) {
-    console.error('LINE push送信でエラー: ' + err);
-  }
-}
-/** LINE連携の動作確認用。Apps Scriptエディタから直接実行して権限承認・送信テストを行う */
-function testLinePush() {
-  const token = PropertiesService.getScriptProperties().getProperty('LINE_CHANNEL_ACCESS_TOKEN');
-  Logger.log('LINE_CHANNEL_ACCESS_TOKEN 設定済み: ' + !!token);
-  // 実際に送信テストしたい場合は、自分のLINEユーザーIDに書き換えてコメントを外してください
-  // pushLineMessage_('あなたのLINEユーザーID', 'テストメッセージです');
-}
-function replyLineMessage_(replyToken, text) {
-  if (!replyToken) return;
-  const token = PropertiesService.getScriptProperties().getProperty('LINE_CHANNEL_ACCESS_TOKEN');
-  if (!token) return;
-  try {
-    UrlFetchApp.fetch('https://api.line.me/v2/bot/message/reply', {
-      method: 'post',
-      contentType: 'application/json',
-      headers: { Authorization: 'Bearer ' + token },
-      payload: JSON.stringify({ replyToken: replyToken, messages: [{ type: 'text', text: text }] }),
-      muteHttpExceptions: true
-    });
-  } catch (err) {
-    console.error('LINE reply送信でエラー: ' + err);
-  }
-}
-
-/* ============ 共通ヘルパー ============ */
-function ss_() {
-  return SpreadsheetApp.openById(SPREADSHEET_ID);
-}
-function sheet_(name) {
-  const sh = ss_().getSheetByName(name);
-  if (!sh) throw new Error('シート「' + name + '」が見つかりません。admin側で setupSheets() を実行済みか確認してください。');
-  return sh;
-}
-function rowsToObjects_(sheet) {
-  const values = sheet.getDataRange().getValues();
-  if (values.length < 2) return [];
-  const headers = values[0];
-  return values.slice(1).map(function (row) {
-    const obj = {};
-    headers.forEach(function (h, i) { obj[h] = row[i]; });
-    return obj;
-  });
-}
-function bool_(v) {
-  return v === true || v === 'TRUE' || v === 'true';
-}
-function dateStr_(v) {
-  if (!v && v !== 0) return '';
-  if (Object.prototype.toString.call(v) === '[object Date]') {
-    return Utilities.formatDate(v, Session.getScriptTimeZone(), 'yyyy-MM-dd');
-  }
-  return String(v);
-}
-function stampStr_(v) {
-  if (!v && v !== 0) return '';
-  if (Object.prototype.toString.call(v) === '[object Date]') {
-    return Utilities.formatDate(v, Session.getScriptTimeZone(), 'MM/dd HH:mm');
-  }
-  return String(v);
-}
-function nowStamp_() {
-  return Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'MM/dd HH:mm');
-}
-function normalizeName_(s) {
-  return String(s || '').replace(/[\s　様]/g, '');
-}
-function findRowByFirstCol_(sheet, value) {
-  const data = sheet.getDataRange().getValues();
-  for (let i = 1; i < data.length; i++) {
-    if (String(data[i][0]) === String(value)) return i + 1;
-  }
-  return -1;
-}
-function colIndex_(sheet, headerName) {
-  const headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0];
-  const idx = headers.indexOf(headerName);
-  if (idx < 0) throw new Error('列「' + headerName + '」が見つかりません');
-  return idx + 1;
-}
-function touchUpdated_(sheet, row) {
-  sheet.getRange(row, colIndex_(sheet, 'Updated')).setValue(nowStamp_());
-}
-
-/** 1件の注文＋チャットだけを取り出す（他のお客様のデータは一切含めない） */
-function getOrderDetail_(orderId) {
-  const orderRows = rowsToObjects_(sheet_(SHEETS.ORDERS));
-  const r = orderRows.find(function (x) { return x.OrderID === orderId; });
-  if (!r) return null;
-
-  const messages = rowsToObjects_(sheet_(SHEETS.MESSAGES))
-    .filter(function (m) { return m.OrderID === orderId; })
-    .map(function (m) {
-      const msg = { from: m.From, text: m.Text, time: stampStr_(m.Time) };
-      if (m.Attach) msg.attach = m.Attach;
-      return msg;
-    });
-
-  const order = {
-    id: r.OrderID,
-    customer: r.Customer,
-    fabricId: r.FabricId,
-    fabricName: r.FabricName,
-    colorCode: r.ColorCode || '',
-    colorName: r.ColorName || '',
-    sizes: parseSizes_(r),
-    status: r.Status,
-    desiredDate: dateStr_(r.DesiredDate),
-    updated: stampStr_(r.Updated),
-    chatId: r.OrderID
+const MAX_DESIGN_FILE_MB = 8;
+function onDesignFileChange(e){
+  const file = e.target.files && e.target.files[0];
+  if(!file) return;
+  if(!file.type.startsWith('image/')){ alert('画像ファイルを選択してください。'); e.target.value=''; return; }
+  if(file.size > MAX_DESIGN_FILE_MB*1024*1024){ alert('画像サイズが大きすぎます（'+MAX_DESIGN_FILE_MB+'MB以下にしてください）。'); e.target.value=''; return; }
+  const reader = new FileReader();
+  reader.onload = function(){
+    const dataUrl = reader.result;
+    orderForm.designImage = { base64: dataUrl.split(',')[1], mime: file.type, name: file.name };
+    const preview = document.getElementById('upload-preview');
+    preview.src = dataUrl;
+    preview.hidden = false;
+    document.getElementById('upload-icon').hidden = true;
+    document.getElementById('upload-text').textContent = file.name + ' を添付しました（タップで変更）';
   };
-  const chat = {
-    customer: r.Customer,
-    contact: r.Contact,
-    estimate: (r.Estimate === '' || r.Estimate === null || r.Estimate === undefined) ? null : Number(r.Estimate),
-    estimateConfirmed: bool_(r.EstimateConfirmed),
-    designFile: r.DesignFile || null,
-    designConfirmed: bool_(r.DesignConfirmed),
-    unread: Number(r.Unread) || 0,
-    messages: messages
+  reader.onerror = function(){ alert('画像の読み込みに失敗しました。'); };
+  reader.readAsDataURL(file);
+}
+
+function renderSummary(){
+  const total = cartTotalQty();
+  const dateVal = document.getElementById('cust-date').value;
+  const itemBlocks = cart.map(function(item){
+    return `<div style="margin-bottom:8px;">
+      <div style="font-size:12.5px;color:var(--ink-muted);margin-bottom:2px;">${esc(item.itemCode)} ${esc(item.itemName)} ／ ${esc(item.colorName)}</div>
+      ${sizeLines(item.sizes,{divider:true,size:'12.5px',muted:true})}
+    </div>`;
+  }).join('');
+  document.getElementById('order-summary').innerHTML = `
+    ${itemBlocks}
+    <div style="display:flex;justify-content:space-between;padding:7px 0 2px;">
+      <span style="font-size:12.5px;font-weight:600;">合計</span>
+      <span class="mono" style="font-size:12.5px;font-weight:600;">${total}枚</span>
+    </div>
+    <div style="height:1px;background:var(--line);margin:10px 0;"></div>
+    <div style="font-size:12.5px;color:var(--ink-muted);">デザイン：${orderForm.designImage?'画像あり':'画像なし'}${document.getElementById('design-text').value.trim()?'・メモあり':''}</div>
+    <div style="font-size:12.5px;color:var(--ink-muted);margin-top:4px;">納品希望日：${dateVal || '未指定'}</div>`;
+}
+
+/* 端末の電話番号オートフィルが、日本の携帯番号の先頭の0を省いて補完することがあるため、
+   09012345678のような0始まり10桁の携帯番号に見える場合は先頭に0を補って送信する */
+function normalizePhone_(raw){
+  const digits = raw.replace(/[^\d]/g,'');
+  if(/^[1-9]\d{9}$/.test(digits)) return '0'+digits;
+  return raw;
+}
+function submitOrder(){
+  if(!lineProfile){ alert('LINEのプロフィール取得に失敗しています。アプリを開き直してください。'); return; }
+  const contact = normalizePhone_(document.getElementById('cust-contact').value.trim());
+  if(!contact){ alert('電話番号を入力してください。'); document.getElementById('cust-contact').focus(); return; }
+  const desiredDate = document.getElementById('cust-date').value;
+  const designNote = document.getElementById('design-text').value.trim();
+  const payload = {
+    lineUserId: lineProfile.userId,
+    lineDisplayName: lineProfile.displayName,
+    contact: contact,
+    items: cart,
+    desiredDate: desiredDate,
+    designNote: designNote,
+    designImageBase64: orderForm.designImage ? orderForm.designImage.base64 : '',
+    designImageName: orderForm.designImage ? orderForm.designImage.name : '',
+    designImageMime: orderForm.designImage ? orderForm.designImage.mime : ''
   };
-  return { order: order, chat: chat };
-}
 
-/* ============ 氏名＋メールアドレスでの照会 ============ */
-function lookupOrderServer(name, email) {
-  const orderRows = rowsToObjects_(sheet_(SHEETS.ORDERS));
-  const nameNorm = normalizeName_(name);
-  const emailNorm = String(email || '').trim().toLowerCase();
-  if (!nameNorm || !emailNorm) return null;
+  const btn = document.getElementById('submit-btn');
+  btn.disabled = true;
+  btn.textContent = '送信中…';
 
-  const match = orderRows.find(function (r) {
-    const contactMatch = String(r.Contact || '').trim().toLowerCase() === emailNorm;
-    const rNameNorm = normalizeName_(r.Customer);
-    const nameMatch = rNameNorm && (rNameNorm.indexOf(nameNorm) >= 0 || nameNorm.indexOf(rNameNorm) >= 0);
-    return contactMatch && nameMatch;
-  });
-  if (!match) return null;
-  return getOrderDetail_(match.OrderID);
-}
-
-/* ============ お客様からのメッセージ送信 ============ */
-function addMessage(orderId, from, text) {
-  const lock = LockService.getScriptLock();
-  lock.waitLock(30000);
-  try {
-    const time = nowStamp_();
-    sheet_(SHEETS.MESSAGES).appendRow([orderId, from, text, time, '']);
-
-    const ordSheet = sheet_(SHEETS.ORDERS);
-    const row = findRowByFirstCol_(ordSheet, orderId);
-    if (row > 0) {
-      touchUpdated_(ordSheet, row);
-      if (from === 'customer') {
-        const c = colIndex_(ordSheet, 'Unread');
-        const cur = Number(ordSheet.getRange(row, c).getValue()) || 0;
-        ordSheet.getRange(row, c).setValue(cur + 1);
-      }
-    }
-    return time;
-  } finally {
-    lock.releaseLock();
-  }
-}
-
-/* 新しい注文ID・行データの共通生成（Ordersシートの実際の列順に合わせている） */
-/** Contact列（電話番号）がスプレッドシートに数値として解釈され、先頭の0が消えてしまう問題の
-   予防策。setupSheets()側で既に列全体をテキスト形式にしているはずだが、念のため注文作成の
-   たびにも明示的に設定しておく（軽い操作なので毎回呼んでも問題ない）。 */
-function ensureContactTextFormat_(sh) {
-  sh.getRange('C:C').setNumberFormat('@');
-}
-function nextOrderId_(sh) {
-  const data = sh.getDataRange().getValues();
-  let maxNum = 1041;
-  for (let i = 1; i < data.length; i++) {
-    const m = String(data[i][0]).match(/A-(\d+)/);
-    if (m) maxNum = Math.max(maxNum, Number(m[1]));
-  }
-  return 'A-' + (maxNum + 1);
-}
-/* SizeXS〜SizeXXLの固定列はTシャツ以外（帽子・バッグ・キッズサイズ等）のサイズ名に対応できないため、
-   実際のサイズ内訳はSizesJson列にJSONでそのまま保存する。固定列は昔からの注文一覧表示との互換用に、
-   キーが一致するものだけ埋める。 */
-function buildOrderRow_(newId, customerName, contact, payload, sizes, now, lineUserId) {
-  return [
-    newId, customerName, contact, payload.fabricId, payload.fabricName,
-    sizes.S || 0, sizes.M || 0, sizes.L || 0, sizes.XL || 0,
-    '受注受付', payload.desiredDate || '', '', false,
-    payload.designFileUrl || '', false, 0, now,
-    lineUserId || '',
-    payload.colorCode || '', payload.colorName || '',
-    sizes.XS || 0, sizes.XXL || 0,
-    JSON.stringify(sizes || {})
-  ];
-}
-/* ============ デザイン添付画像の保存（Googleドライブ） ============
-   お客様の端末でBase64化した画像をfetchで送ってもらい、ここでDriveに保存してURLを返す。
-   以前は「アップロードした風に見せるだけ」のダミー実装だったため、実ファイルとして残るようにした。 */
-/** デザイン画像アップロードが「Driveに保存されない（エラーも出ない）」場合に一度だけ実行する。
-   saveDesignImage_はDrive保存に失敗しても注文自体は静かに成立させる仕様のため、権限不足に
-   気づきにくい。Apps Scriptエディタ（customer側のプロジェクト）でこの関数を選んで「実行」を
-   押すと、Googleドライブへのアクセス許可を求める画面が出るので、そこで許可すればよい。 */
-function authorizeDriveAccess() {
-  const folder = DriveApp.getRootFolder();
-  Logger.log('Driveへのアクセスを確認しました: ' + folder.getName());
-}
-function getDesignFolder_() {
-  const name = 'MarineBlue_デザイン添付';
-  const it = DriveApp.getFoldersByName(name);
-  if (it.hasNext()) return it.next();
-  return DriveApp.createFolder(name);
-}
-function saveDesignImage_(base64Data, fileName, mimeType, orderId) {
-  if (!base64Data) { Logger.log('saveDesignImage_: base64Dataが空のため保存をスキップしました（画像が添付されていません）'); return ''; }
-  try {
-    Logger.log('saveDesignImage_: 保存を開始します（データ長=' + base64Data.length + '、ファイル名=' + fileName + '、mime=' + mimeType + '）');
-    const folder = getDesignFolder_();
-    const bytes = Utilities.base64Decode(base64Data);
-    const safeName = (orderId ? orderId + '_' : '') + (fileName || 'design.jpg');
-    const blob = Utilities.newBlob(bytes, mimeType || 'image/jpeg', safeName);
-    const file = folder.createFile(blob);
-    file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
-    /* getUrl()（閲覧ページ）だと<img>で直接プレビューできない。以前はuc?export=view形式を
-       使っていたが、Google側の仕様変更でこの形式は<img>埋め込みが失敗する（真っ白・壊れた
-       画像アイコンになる）ことが増えてきたため、より安定しているthumbnailエンドポイントに変更。
-       クリックで開いたときもそのまま画像として表示される。 */
-    const url = 'https://drive.google.com/thumbnail?id=' + file.getId() + '&sz=w2000';
-    Logger.log('saveDesignImage_: 保存に成功しました → ' + url);
-    return url;
-  } catch (err) {
-    Logger.log('デザイン画像の保存に失敗しました: ' + err);
-    return '';
-  }
-}
-function sizeSummaryLines_(sizes) {
-  return Object.keys(sizes || {}).filter(function (s) { return sizes[s] > 0; }).map(function (s) { return s + '：' + sizes[s] + '枚'; }).join('\n');
-}
-function sizeTotal_(sizes) {
-  return Object.keys(sizes || {}).reduce(function (a, s) { return a + (Number(sizes[s]) || 0); }, 0);
-}
-
-/* ============ 新規注文の作成 ============ */
-function createOrder(payload) {
-  const lock = LockService.getScriptLock();
-  lock.waitLock(30000);
-  try {
-    const sh = sheet_(SHEETS.ORDERS);
-    const newId = nextOrderId_(sh);
-    const now = nowStamp_();
-    const sizes = payload.sizes || {};
-    if (payload.designImageBase64) payload.designFileUrl = saveDesignImage_(payload.designImageBase64, payload.designImageName, payload.designImageMime, newId);
-
-    sh.appendRow(buildOrderRow_(newId, payload.customer, payload.contact, payload, sizes, now, ''));
-
-    if (payload.designNote) {
-      sheet_(SHEETS.MESSAGES).appendRow([newId, 'customer', 'デザインについてのご要望：' + payload.designNote, now, '']);
-    }
-
-    adjustProductStock_(payload.fabricId, payload.colorCode, sizes, newId);
-    sendOrderEmails_(newId, payload);
-
-    return getOrderDetail_(newId);
-  } finally {
-    lock.releaseLock();
-  }
-}
-
-/* ============ 新規注文の作成（LIFF注文フォームから） ============ */
-function createOrderFromLiff(payload) {
-  const lock = LockService.getScriptLock();
-  lock.waitLock(30000);
-  try {
-    const sh = sheet_(SHEETS.ORDERS);
-    const newId = nextOrderId_(sh);
-    const now = nowStamp_();
-    const sizes = payload.sizes || {};
-    const customerName = payload.lineDisplayName || payload.customer || 'お客様';
-    const contact = payload.contact || '(LINE)';
-    if (payload.designImageBase64) payload.designFileUrl = saveDesignImage_(payload.designImageBase64, payload.designImageName, payload.designImageMime, newId);
-
-    ensureContactTextFormat_(sh);
-    sh.appendRow(buildOrderRow_(newId, customerName, contact, payload, sizes, now, payload.lineUserId));
-    trySetOrderField_(sh, sh.getLastRow(), 'OrderSource', 'line');
-    orderItemsSheet_().appendRow([newId, payload.fabricId || '', payload.fabricName || '', payload.colorCode || '', payload.colorName || '', JSON.stringify(sizes)]);
-
-    if (payload.designNote) {
-      sheet_(SHEETS.MESSAGES).appendRow([newId, 'customer', 'デザインについてのご要望：' + payload.designNote, now, '']);
-    }
-
-    adjustProductStock_(payload.fabricId, payload.colorCode, sizes, newId);
-
-    // LINEへ注文確認メッセージを送信
-    if (payload.lineUserId) {
-      const sizeLines = sizeSummaryLines_(sizes);
-      const total = sizeTotal_(sizes);
-      const text =
-        'ご注文ありがとうございます！以下の内容で受け付けました。\n\n' +
-        '注文番号：#' + newId + '\n' +
-        '商品：' + payload.fabricId + ' ' + payload.fabricName + (payload.colorName ? ' ／ ' + payload.colorName : '') + '\n' +
-        (sizeLines ? sizeLines + '\n' : '') +
-        '合計：' + total + '枚\n' +
-        '納品希望日：' + (payload.desiredDate || '未指定') + '\n\n' +
-        '見積り・デザインについては、このトークルームで担当者からご連絡します。';
-      pushLineMessage_(payload.lineUserId, text);
-    }
-
-    // 運営者への通知メール（従来通り）
-    sendAdminNotifyEmail_(newId, {
-      customer: customerName,
-      contact: contact,
-      fabricId: payload.fabricId,
-      fabricName: payload.fabricName,
-      colorName: payload.colorName,
-      sizes: sizes,
-      desiredDate: payload.desiredDate,
-      designNote: payload.designNote
+  fetch(CUSTOMER_API_URL, {
+    method: 'POST',
+    headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+    body: JSON.stringify({ apiAction: 'createOrdersFromLiffCart', payload: payload })
+  })
+    .then(function(res){ return res.json(); })
+    .then(function(result){
+      btn.disabled = false;
+      btn.textContent = 'この内容で注文する';
+      if(!result.ok){ gsError(result.error || '注文の登録に失敗しました'); return; }
+      cart = [];
+      showOrderScreen('complete');
+      document.getElementById('complete-order-id').textContent = '注文番号：#'+(result.result.orderId||'');
+    })
+    .catch(function(err){
+      btn.disabled = false;
+      btn.textContent = 'この内容で注文する';
+      gsError(err);
     });
-
-    return getOrderDetail_(newId);
-  } finally {
-    lock.releaseLock();
-  }
 }
 
-/* ============ 新規注文の作成（LIFF注文フォームのカートから・複数商品まとめて注文） ============
-   色違いなどをまとめてカートに入れて注文しても、見た目上・管理上ともに「1つの注文」として
-   扱えるよう、OrderIDは1つだけ発行し、商品（型番×カラー）ごとの内訳はOrderItemsシートに
-   1行ずつ記録する。デザイン画像・ご要望メモ・LINE確認メッセージ・運営者通知メール・
-   ステータス／見積り／デザイン確認も、カート全体でこの1つの注文に対して行う。 */
-function createOrdersFromLiffCart(payload) {
-  const lock = LockService.getScriptLock();
-  lock.waitLock(30000);
-  try {
-    const sh = sheet_(SHEETS.ORDERS);
-    const now = nowStamp_();
-    const customerName = payload.lineDisplayName || payload.customer || 'お客様';
-    const contact = payload.contact || '(LINE)';
-    const designFileUrl = payload.designImageBase64 ? saveDesignImage_(payload.designImageBase64, payload.designImageName, payload.designImageMime, 'cart') : '';
-
-    const validItems = (payload.items || []).filter(function (item) { return sizeTotal_(item.sizes || {}) > 0; });
-    if (!validItems.length) throw new Error('数量が入力されていません。');
-
-    const newId = nextOrderId_(sh);
-    const first = validItems[0];
-    ensureContactTextFormat_(sh);
-    sh.appendRow(buildOrderRow_(newId, customerName, contact, {
-      fabricId: first.itemCode, fabricName: first.itemName, colorCode: first.colorCode, colorName: first.colorName,
-      desiredDate: payload.desiredDate, designFileUrl: designFileUrl
-    }, first.sizes || {}, now, payload.lineUserId));
-    trySetOrderField_(sh, sh.getLastRow(), 'OrderSource', 'line');
-
-    const oiSh = orderItemsSheet_();
-    const oiRows = [];
-    const summaryBlocks = [];
-    let grandTotal = 0;
-    validItems.forEach(function (item) {
-      const sizes = item.sizes || {};
-      oiRows.push([newId, item.itemCode, item.itemName, item.colorCode || '', item.colorName || '', JSON.stringify(sizes)]);
-      adjustProductStock_(item.itemCode, item.colorCode, sizes, newId);
-      const total = sizeTotal_(sizes);
-      const sizeLines = sizeSummaryLines_(sizes);
-      summaryBlocks.push(
-        '商品：' + item.itemCode + ' ' + item.itemName + (item.colorName ? ' ／ ' + item.colorName : '') + '\n' +
-        (sizeLines ? sizeLines + '\n' : '') + '小計：' + total + '枚'
-      );
-      grandTotal += total;
-    });
-    /* 商品ごとにappendRowを繰り返すのではなく、まとめて1回で書き込む
-       （色違いを複数カートに入れた場合に、内訳の一部が抜けることがあったための対策） */
-    if (oiRows.length) {
-      oiSh.getRange(oiSh.getLastRow() + 1, 1, oiRows.length, oiRows[0].length).setValues(oiRows);
-    }
-
-    if (payload.designNote) {
-      sheet_(SHEETS.MESSAGES).appendRow([newId, 'customer', 'デザインについてのご要望：' + payload.designNote, now, '']);
-    }
-
-    if (payload.lineUserId) {
-      const text =
-        'ご注文ありがとうございます！以下の内容で受け付けました。\n\n' +
-        '注文番号：#' + newId + '\n\n' +
-        summaryBlocks.join('\n\n') + '\n\n' +
-        '合計：' + grandTotal + '枚\n' +
-        '納品希望日：' + (payload.desiredDate || '未指定') + '\n\n' +
-        '見積り・デザインについては、このトークルームで担当者からご連絡します。';
-      pushLineMessage_(payload.lineUserId, text);
-    }
-
-    sendAdminNotifyEmail_(newId, {
-      customer: customerName,
-      contact: contact,
-      fabricId: first.itemCode,
-      fabricName: validItems.length > 1 ? (validItems.length + '点のご注文') : first.itemName,
-      sizes: first.sizes || {},
-      desiredDate: payload.desiredDate,
-      designNote: payload.designNote
-    });
-
-    return { orderId: newId };
-  } finally {
-    lock.releaseLock();
-  }
+function closeLiff(){
+  try{ if(liff.isInClient()) { liff.closeWindow(); return; } }catch(e){}
+  window.close();
 }
 
-/* ============ 注文受付メール ============ */
-function sendOrderEmails_(orderId, payload) {
-  const sizeLines = sizeSummaryLines_(payload.sizes || {});
-  const total = sizeTotal_(payload.sizes || {});
-
-  // お客様への受付確認メール
-  try {
-    if (payload.contact) {
-      const body =
-        payload.customer + ' 様\n\n' +
-        'この度はMarineBlueにご注文いただきありがとうございます。\n' +
-        '以下の内容で注文を受け付けました。担当者よりお見積り・デザインについて追ってご連絡いたします。\n\n' +
-        '── ご注文内容 ──────────────\n' +
-        '注文番号：#' + orderId + '\n' +
-        '商品：' + payload.fabricId + ' ' + payload.fabricName + (payload.colorName ? ' ／ ' + payload.colorName : '') + '\n' +
-        (sizeLines ? sizeLines + '\n' : '') +
-        '合計：' + total + '枚\n' +
-        '納品希望日：' + (payload.desiredDate || '未指定') + '\n' +
-        '────────────────────\n\n' +
-        '注文状況は、お客様ページの「注文状況を確認する」からいつでもご確認いただけます。\n' +
-        '（照会にはご注文時に入力したお名前とメールアドレスが必要です）';
-      MailApp.sendEmail({
-        to: payload.contact,
-        subject: '【MarineBlue】ご注文を受け付けました（#' + orderId + '）',
-        body: body
+/* ============ LIFF初期化 ============ */
+const liffSteps = [];
+function step(s){
+  liffSteps.push(s);
+  const dbg = document.getElementById('liff-debug');
+  if(dbg) dbg.textContent = liffSteps.join('\n');
+}
+function showLiffError(detail){
+  document.getElementById('liff-loading').hidden = true;
+  document.getElementById('liff-error').hidden = false;
+  document.getElementById('liff-error-detail').textContent = detail + '\n\n' + liffSteps.join('\n');
+}
+step('page loaded: ' + location.href);
+let liffWatchdog = setTimeout(function(){
+  showLiffError('初期化がタイムアウトしました（10秒）');
+}, 10000);
+function initLiff(){
+  try{
+    if(typeof liff === 'undefined'){
+      clearTimeout(liffWatchdog);
+      showLiffError('liff is undefined（SDK読み込み失敗）');
+      return;
+    }
+    step('liff SDK OK, isInClient=' + liff.isInClient());
+    liff.init({ liffId: '2011455921-pRkUNsnW' })
+      .then(function(){
+        step('init() resolved');
+        const loggedIn = liff.isLoggedIn();
+        step('isLoggedIn=' + loggedIn);
+        if(!loggedIn){ step('calling liff.login()'); liff.login(); return; }
+        step('calling getProfile()');
+        return liff.getProfile();
+      })
+      .then(function(profile){
+        if(!profile){ step('profile is empty(post-login redirect expected)'); return; }
+        step('getProfile OK: ' + profile.displayName);
+        clearTimeout(liffWatchdog);
+        try{ sessionStorage.removeItem('liffRetried'); }catch(e){}
+        lineProfile = profile;
+        document.getElementById('liff-name').textContent = profile.displayName;
+        document.getElementById('liff-avatar').src = profile.pictureUrl || '';
+        document.getElementById('liff-loading').hidden = true;
+        showOrderScreen('step1');
+      })
+      .catch(function(err){
+        const msg = (err && err.message) ? err.message : String(err);
+        if(msg.indexOf('access token expired')>=0 && !sessionStorage.getItem('liffRetried')){
+          sessionStorage.setItem('liffRetried','1');
+          try{ liff.logout(); }catch(e){}
+          location.reload();
+          return;
+        }
+        clearTimeout(liffWatchdog);
+        showLiffError('init/getProfileエラー: ' + msg + (err && err.code ? (' / code: ' + err.code) : ''));
       });
-    }
-  } catch (err) {
-    console.error('お客様への確認メール送信に失敗しました: ' + err);
-  }
-
-  sendAdminNotifyEmail_(orderId, payload);
-}
-
-/* 運営者への新規注文通知メール（Web注文フォーム・LIFF注文フォーム共通） */
-function sendAdminNotifyEmail_(orderId, payload) {
-  try {
-    if (!ADMIN_NOTIFY_EMAIL || ADMIN_NOTIFY_EMAIL.indexOf('ここに') === 0) return;
-    const sizes = payload.sizes || {};
-    const sizeLines = sizeSummaryLines_(sizes);
-    const total = sizeTotal_(sizes);
-    const body =
-      '新しい注文が入りました。\n\n' +
-      '注文番号：#' + orderId + '\n' +
-      'お客様：' + payload.customer + '（' + payload.contact + '）\n' +
-      '商品：' + payload.fabricId + ' ' + payload.fabricName + (payload.colorName ? ' ／ ' + payload.colorName : '') + '\n' +
-      (sizeLines ? sizeLines + '\n' : '') +
-      '合計：' + total + '枚\n' +
-      '納品希望日：' + (payload.desiredDate || '未指定') + '\n' +
-      (payload.designNote ? ('デザインのご要望：' + payload.designNote + '\n') : '') +
-      '\n管理画面から見積り・デザインの確認を進めてください。';
-    MailApp.sendEmail({
-      to: ADMIN_NOTIFY_EMAIL,
-      subject: '【MarineBlue】新しい注文が届きました（#' + orderId + '）',
-      body: body
-    });
-  } catch (err) {
-    console.error('運営者への通知メール送信に失敗しました: ' + err);
+  }catch(err){
+    clearTimeout(liffWatchdog);
+    showLiffError('同期エラー: ' + ((err && err.message) ? err.message : String(err)));
   }
 }
+initLiff();
+</script>
+</body>
+</html>
