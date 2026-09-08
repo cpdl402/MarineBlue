@@ -518,7 +518,7 @@ function submitOrder(){
       if(!result.ok){ gsError(result.error || '注文の登録に失敗しました'); return; }
       cart = [];
       showOrderScreen('complete');
-      document.getElementById('complete-order-id').textContent = '注文番号：#'+(result.result.orderIds||[]).join('、#');
+      document.getElementById('complete-order-id').textContent = '注文番号：#'+(result.result.orderId||'');
     })
     .catch(function(err){
       btn.disabled = false;
