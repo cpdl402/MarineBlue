@@ -193,6 +193,14 @@ function orderCardHtml(order){
         <div style="display:none;font-size:11.5px;color:var(--accent);text-align:center;">画像を開く</div>
       </a>
     </div>`:''}
+    ${order.designConfirmFile?`
+    <div style="background:var(--surface-2);border:1px solid var(--line);border-radius:12px;padding:14px 15px;margin-top:14px;">
+      <div style="font-size:12.5px;font-weight:600;margin-bottom:8px;">確定したデザイン</div>
+      <a href="${esc(order.designConfirmFile)}" target="_blank" style="display:block;">
+        <img src="${esc(order.designConfirmFile)}" style="max-width:100%;max-height:220px;border-radius:8px;border:1px solid var(--line);display:block;margin:0 auto;" onerror="this.style.display='none';this.nextElementSibling.style.display='block';">
+        <div style="display:none;font-size:11.5px;color:var(--accent);text-align:center;">画像を開く</div>
+      </a>
+    </div>`:''}
   </div>`;
 }
 
